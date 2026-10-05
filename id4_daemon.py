@@ -1,27 +1,24 @@
-#!/usr/bin/env python3
-"""
-=============================================================================
- JussID – Python Taustapalvelu (Daemon v1.0)
- ID.4 GTX & Evenli Smart Charging Controller
-=============================================================================
- Tämä skripti toimii JussID-järjestelmän taustamoottorina:
- 1. Kuuntelee iPhonella tehtyjä valintoja Firebase-pilvestä (jussid-ede86).
- 2. Noutaa Suomen pörssisähkön tuntihinnat (Spot-hinta API).
- 3. Pitää Evenli-lataustolpan kättelyn hengissä (Keep-Alive).
- 4. Ohjaa Volkswagen ID.4 GTX -auton latausta yöllä edullisimmilla tunneilla.
-=============================================================================
-"""
-
+import os
 import time
 import datetime
+import threading
 import requests
+from flask import Flask
+
+try:
+    from weconnect import WeConnect
+    WE_CONNECT_AVAILABLE = True
+except ImportError:
+    WE_CONNECT_AVAILABLE = False
 
 # =========================================================================
-# 1. KÄYTTÄJÄN ASETUKSET (TÄYTÄ OMAT VOLKSWAGEN-TUNNUKSET TÄHÄN)
+# FIREBASE & VW CONNECT TUNNUKSET
 # =========================================================================
-VW_USERNAME = "jussi.parikka@gmail.com"  # Syötä VW ID -sähköpostisi
-VW_PASSWORD = "R0manialainen2025"          # Syötä VW ID -salasanasi
-VW_VIN      = "WVGZZZE2ZNP017960"           # Syötä autosi VIN-koodi
+FIREBASE_URL = "https://jussid-ede86-default-rtdb.europe-west1.firebasedatabase.app"
+
+VW_USERNAME = "jussi.parikka@gmail.com"
+VW_PASSWORD = "R0manialainen2025"
+VW_VIN = "WVGZZZE2ZNP017960"
 
 # =========================================================================
 # PIENI VALEPALVELIN (Pitävät Render Web Servicen käynnissä 24/7)
@@ -36,7 +33,6 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# Pyöritetään valepalvelinta omassa taustasäikeessään
 flask_thread = threading.Thread(target=run_flask, daemon=True)
 flask_thread.start()
 
@@ -125,7 +121,7 @@ class ID4Controller:
             update_firebase("carStatus", data)
             print(f"[STATUS] Akku: {soc} % ({range_km} km) | Tila: {charging_status}")
         else:
-            # Simulaatio-fallback, jos aitoa yhteyttä ei ole määritetty
+            # Fallback, jos aitoa yhteyttä ei vielä saavutettu
             data = {
                 "currentSoc": 64,
                 "rangeKm": 312,
@@ -134,7 +130,7 @@ class ID4Controller:
             }
             update_firebase("carStatus", data)
 
-   def set_charging(self, start=True):
+    def set_charging(self, start=True):
         """ Ohjaa latausta (Aloita / Keskeytä) """
         if not self.vehicle or 'controls' not in self.vehicle.domains['charging']:
             status_text = "KÄYNNISSÄ" if start else "TAUOTETTU"
@@ -151,3 +147,45 @@ class ID4Controller:
                 print("[VW CONNECT] Lataus tauotettu (odottaa halpoja tunteja)...")
         except Exception as e:
             print(f"[VW CONNECT ERROR] Latauskomennon lähetys epäonnistui: {e}")
+
+# =========================================================================
+# PÄÄSILMUKKA (DAEMON LOOP)
+# =========================================================================
+def main():
+    print("==========================================================")
+    print("   JussID — VW ID.4 GTX Älylatauksen Taustavahti Käynnissä ")
+    print("==========================================================")
+
+    controller = ID4Controller()
+
+    while True:
+        try:
+            # 1. Päivitä auton tila Firebaseen
+            controller.update_status_to_firebase()
+
+            # 2. Lue käyttäjän iPhonesta valitsema tila
+            config = get_firebase_state()
+            mode = config.get("mode", "IMMEDIATE")
+            deadline = config.get("deadline", "07:00")
+            target_soc = config.get("targetSoc", 80)
+
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Tila: {mode} | Tavoite: {target_soc}% klo {deadline}")
+
+            if mode == "IMMEDIATE":
+                controller.set_charging(True)
+            elif mode == "SMART":
+                prices = get_spot_prices()
+                if prices:
+                    current_price = prices[0]['PriceWithTax'] if prices else 0
+                    if current_price < 0.08:
+                        controller.set_charging(True)
+                    else:
+                        controller.set_charging(False)
+
+        except Exception as e:
+            print(f"[DAEMON ERROR] Odottamaton virhe silmukassa: {e}")
+
+        time.sleep(60)
+
+if __name__ == "__main__":
+    main()

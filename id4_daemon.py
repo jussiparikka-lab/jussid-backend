@@ -216,14 +216,3 @@ if __name__ == "__main__":
 ```
 
 ---
-
-### Miten toimit seuraavaksi:
-
-1. **Lataa tiedosto:** Voit ladata luodun tiedoston suoraan tietokoneellesi ruudun oikeassa laidassa olevasta editorista / tiedostolinkistä.
-2. **Lisää tunnuksesi:** Avaa tiedosto koneellasi tekstieditorilla (Muistio tai Teksturi) ja täytä rivit 16–18:
-   * `VW_USERNAME = "sinun_vw_sähköpostisi"`
-   * `VW_PASSWORD = "sinun_vw_salasanasi"`
-   * `VW_VIN = "autosi_vin_koodi"`
-3. **Käynnistä:** Avaa tietokoneen komentorivi (`cmd` tai `Terminal`) ja aja:
-   ```bash
-   python id4_daemon.py

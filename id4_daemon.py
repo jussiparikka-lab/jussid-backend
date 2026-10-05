@@ -134,7 +134,20 @@ class ID4Controller:
             }
             update_firebase("carStatus", data)
 
-    def set_charging(self, start=True):
+   def set_charging(self, start=True):
         """ Ohjaa latausta (Aloita / Keskeytä) """
         if not self.vehicle or 'controls' not in self.vehicle.domains['charging']:
-            print(f"[VW SIMULAATIO] Lataus asetettu tilaan: {'K
+            status_text = "KÄYNNISSÄ" if start else "TAUOTETTU"
+            print(f"[VW SIMULAATIO] Lataus asetettu tilaan: {status_text}")
+            return
+
+        try:
+            controls = self.vehicle.domains['charging']['controls']
+            if start:
+                controls.startCharging()
+                print("[VW CONNECT] Lataus käynnistetty komennolla!")
+            else:
+                controls.stopCharging()
+                print("[VW CONNECT] Lataus tauotettu (odottaa halpoja tunteja)...")
+        except Exception as e:
+            print(f"[VW CONNECT ERROR] Latauskomennon lähetys epäonnistui: {e}")

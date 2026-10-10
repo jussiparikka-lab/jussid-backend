@@ -2,20 +2,19 @@
 import time
 import requests
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, jsonify
 from weconnect import weconnect
 
 app = Flask(__name__)
 
-# --- ASETUKSET ---
 VW_USERNAME = "jussi.parikka@gmail.com"
-VW_PASSWORD = "R0manialainen2025"  # <-- Laita tähän VW ID -salasanasi
+VW_PASSWORD = "R0manialainen2025"  # <-- Laita tähän oikea VW ID -salasanasi
 VW_VIN = "WVGZZZE2ZNP017960"
 
 FIREBASE_URL = "https://jussid-ede86-default-rtdb.europe-west1.firebasedatabase.app"
 
-# Glokaali tila
+# Globaali tila auton arvoille
 car_state = {
     "currentSoc": 0,
     "rangeKm": 0,
@@ -35,12 +34,12 @@ def get_spot_prices():
     return []
 
 def calculate_smart_schedule(current_soc, target_soc, deadline_str, prices):
-    """ Laskee halvimmat tuntijaksot lataukselle """
+    """ Laskee halvimmat tuntijaksot lataukselle ennen määräaikaa """
     if not prices:
         return True  # Jos hintoja ei saada, ladataan varmuuden vuoksi
-    
+
     needed_soc = max(0, target_soc - current_soc)
-    # 77 kWh akku, 11 kW teho -> n. 14.2% per tunti
+    # 77 kWh akku, 11 kW teho -> n. 14.2 % akun varausta per tunti
     hours_needed = int(-(-needed_soc // 14.2)) if needed_soc > 0 else 0
 
     if hours_needed == 0:
@@ -55,7 +54,7 @@ def calculate_smart_schedule(current_soc, target_soc, deadline_str, prices):
     except Exception:
         deadline_dt = datetime.combine(now.date(), datetime.strptime("07:00", "%H:%M").time())
 
-    # Suodatetaan tunnit ennen deadlinea
+    # Suodatetaan spot-tunnit nykyhetken ja deadlinen väliltä
     valid_prices = []
     for p in prices:
         try:
@@ -68,7 +67,7 @@ def calculate_smart_schedule(current_soc, target_soc, deadline_str, prices):
     if not valid_prices:
         return True
 
-    # Järjestetään hinnan mukaan ja valitaan halvimmat n tunti(a)
+    # Järjestetään hinnan mukaan ja valitaan halvimmat tarvittavat tunnit
     valid_prices.sort(key=lambda x: x[1])
     cheapest_hours = [x[0].hour for x in valid_prices[:hours_needed]]
 
@@ -81,11 +80,11 @@ class ID4Daemon:
     def connect(self):
         print(f"[VW CONNECT] Kirjaudutaan Volkswagen-palvelimelle ({VW_USERNAME})...")
         try:
+            # Käytetään tuettuja parametreja (ei vanhentunutta loginInit-parametria)
             self.weconnect = weconnect.WeConnect(
                 username=VW_USERNAME,
                 password=VW_PASSWORD,
-                updateAfterLogin=True,
-                loginInit=True
+                updateAfterLogin=True
             )
             print(f"✅ [VW CONNECT] Yhdistetty autoon: {VW_VIN}")
             return True
@@ -107,28 +106,32 @@ class ID4Daemon:
             self.weconnect.update()
             vehicle = self.weconnect.vehicles.get(VW_VIN)
             if not vehicle:
-                print(f"⚠️ Autoa VIN-koodilla {VW_VIN} ei löytynyt.")
+                print(f"⚠️ Autoa VIN-koodilla {VW_VIN} ei löytynyt tililtä.")
                 return
 
-            # Akun varaus ja kantama
+            # Akun varaustaso ja toimintasäde
             battery = vehicle.domains.get('charging', {}).get('batteryStatus', None)
             if battery and battery.currentSOC_pct.value is not None:
                 car_state["currentSoc"] = battery.currentSOC_pct.value
-            
+                if hasattr(battery, 'cruisingRange_km') and battery.cruisingRange_km.value is not None:
+                    car_state["rangeKm"] = battery.cruisingRange_km.value
+                else:
+                    car_state["rangeKm"] = int(car_state["currentSoc"] * 4.6)
+
             charging = vehicle.domains.get('charging', {}).get('chargingStatus', None)
             if charging and charging.chargingState.value is not None:
                 car_state["chargingState"] = str(charging.chargingState.value)
 
             car_state["lastUpdated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            print(f"📊 [STATUS] Akku: {car_state['currentSoc']} % | Tila: {car_state['chargingState']}")
+            print(f"📊 [STATUS] Akku: {car_state['currentSoc']} % ({car_state['rangeKm']} km) | Tila: {car_state['chargingState']}")
 
-            # Päivitetään Firebaseen
+            # Päivitetään tiedot Firebaseen
             requests.patch(f"{FIREBASE_URL}/carStatus.json", json=car_state, timeout=10)
 
         except Exception as e:
             print(f"⚠️ [PÄIVITYSVIRHE] {e}")
-            self.weconnect = None  # Nollataan yhteys, jotta ensi kerralla yritetään uudelleenkirjautumista
+            self.weconnect = None  # Nollataan sessio, jotta seuraavalla kierroksella kirjaudutaan uudelleen
 
     def run_control_loop(self):
         while True:

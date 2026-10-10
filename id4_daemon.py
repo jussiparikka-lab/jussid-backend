@@ -9,6 +9,7 @@
 import os
 import time
 import datetime
+import math
 import threading
 import requests
 from flask import Flask
@@ -26,13 +27,16 @@ except (ImportError, AttributeError):
         WE_CONNECT_AVAILABLE = False
 
 # =========================================================================
-# FIREBASE & VW CONNECT TUNNUKSET (TÄYTÄ OMASI TÄHÄN)
+# FIREBASE & VW CONNECT TUNNUKSET
 # =========================================================================
 FIREBASE_URL = "https://jussid-ede86-default-rtdb.europe-west1.firebasedatabase.app"
 
-VW_USERNAME = "jussi.parikka@gmail.com"  # Syötä VW ID -sähköpostisi
-VW_PASSWORD = "R0manialainen2025"          # Syötä VW ID -salasanasi
-VW_VIN      = "WVGZZZE2ZNP017960"           # Syötä autosi VIN-koodi
+VW_USERNAME = "jussi.parikka@gmail.com"
+VW_PASSWORD = "OMA_SALASANA_TAHAN"          # Varmista oma salasanasi
+VW_VIN      = "WVGZZZE2ZNP017960"
+
+BATTERY_CAPACITY_KWH = 77.0  # ID.4 GTX nettokapasiteetti
+CHARGING_POWER_KW = 11.0     # Evenli Type 2 kolmivaihe 16A (11 kW)
 
 # =========================================================================
 # PIENI VALEPALVELIN (Pitää Render Web Servicen käynnissä 24/7)
@@ -81,7 +85,84 @@ def get_firebase_state():
             return res.json()
     except Exception as e:
         print(f"[FIREBASE ERROR] Tilan luku epäonnistui: {e}")
-    return {"mode": "SMART", "deadline": "07:00", "targetSoc": 80}
+    return {"mode": "IMMEDIATE", "deadline": "07:00", "targetSoc": 80}
+
+def calculate_smart_schedule(current_soc, target_soc, deadline_str, spot_prices):
+    """
+    Laskee tarvittavan lataustuntimäärän (11 kW) ja valitsee
+    halvimmat spot-tunnit ennen annettua deadline-aikaa.
+    Palauttaa: (should_charge_now, reason, selected_hours_list)
+    """
+    now = datetime.datetime.now()
+    
+    # Jos akussa on jo riittävästi virtaa
+    if current_soc >= target_soc:
+        return False, f"Akku on jo saavuttanut tavoitteen ({current_soc}% >= {target_soc}%)", []
+
+    # 1. Lasketaan montako kWh ja montako täyttä tuntia tarvitaan 11 kW teholla
+    needed_soc = target_soc - current_soc
+    needed_kwh = (needed_soc / 100.0) * BATTERY_CAPACITY_KWH
+    # Lisätään n. 10 % lataushäviöitä ja pyöristetään ylöspäin tunneiksi
+    needed_hours = max(1, math.ceil((needed_kwh * 1.10) / CHARGING_POWER_KW))
+
+    # 2. Määritetään määräaika (deadline)
+    try:
+        d_hour, d_min = map(int, deadline_str.split(':'))
+    except Exception:
+        d_hour, d_min = 7, 0
+
+    deadline_dt = now.replace(hour=d_hour, minute=d_min, second=0, microsecond=0)
+    # Jos deadline on jo mennyt tältä päivältä (esim. kello on 21 ja deadline on 07), se on huomisaamuna
+    if deadline_dt <= now:
+        deadline_dt += datetime.timedelta(days=1)
+
+    # 3. Suodatetaan spot-hinnoista ne tunnit, jotka ovat NYT ja DEADLINEN välissä
+    candidate_slots = []
+    for item in spot_prices:
+        dt_str = item.get('DateTime')
+        if not dt_str:
+            continue
+        try:
+            # API palauttaa tyypillisesti ISO-muodossa esim. 2026-10-10T02:00:00+03:00
+            slot_time = datetime.datetime.fromisoformat(dt_str)
+            # Poistetaan aikavyöhyketieto vertailua varten jos local
+            if slot_time.tzinfo:
+                slot_time = slot_time.replace(tzinfo=None)
+            
+            if now <= slot_time < deadline_dt:
+                candidate_slots.append({
+                    "time": slot_time,
+                    "price": item.get('PriceWithTax', 0.0),
+                    "iso": dt_str
+                })
+        except Exception:
+            continue
+
+    # Jos spot-tietoja ei saada tarpeeksi, varalogiikka: ladataan aamuyöllä 01-05 tai heti
+    if not candidate_slots:
+        time_to_deadline_h = (deadline_dt - now).total_seconds() / 3600.0
+        if time_to_deadline_h <= needed_hours:
+            return True, f"Varatila: Aikaa jäljellä vain {time_to_deadline_h:.1f}h, pakotetaan lataus päälle", []
+        return False, "Odotetaan yötä (spot-data puuttuu)", []
+
+    # 4. Jos aikaa deadlineen on vähemmän tai tasan tarvittava määrä tunteja -> pakotetaan lataus heti
+    if len(candidate_slots) <= needed_hours:
+        return True, f"Kaikki jäljellä olevat {len(candidate_slots)} tuntia tarvitaan tavoitteeseen pääsyyn", candidate_slots
+
+    # 5. Järjestetään ehdokastunnit hinnan mukaan halvimmasta kalleimpaan ja valitaan halvimmat N tuntia
+    sorted_by_price = sorted(candidate_slots, key=lambda x: x['price'])
+    cheapest_slots = sorted_by_price[:needed_hours]
+    cheapest_times = [s['time'] for s in cheapest_slots]
+
+    # Tarkistetaan, osuuko kuluva tunti halvimpiin valittuihin tunteihin
+    current_hour_dt = now.replace(minute=0, second=0, microsecond=0)
+    is_current_slot_chosen = any(abs((t - current_hour_dt).total_seconds()) < 1800 for t in cheapest_times)
+
+    hours_list_str = ", ".join([t.strftime('%H:00') for t in sorted(cheapest_times)])
+    if is_current_slot_chosen:
+        return True, f"Kuluva tunti on valittu halvoista tunneista ({hours_list_str})", cheapest_slots
+    else:
+        return False, f"Odottaa edullisempia tunteja ({hours_list_str}), tarve {needed_hours} h", cheapest_slots
 
 # =========================================================================
 # VOLKSWAGEN VW-CONNECT INTEGRAATIO
@@ -119,18 +200,15 @@ class ID4Controller:
 
     def update_status_to_firebase(self):
         """ Hakee tuoreen akkutiedon autolta ja päivittää sen Firebaseen """
-        # Jos yhteys puuttuu, kokeillaan yhdistää uudelleen
         if not self.vehicle:
             self.connect()
 
-        # Päivitetään tiedot VW:n palvelimilta
         if self.weconnect:
             try:
                 self.weconnect.update()
             except Exception as e:
                 print(f"[VW UPDATE ERROR] Auton tietojen päivitys epäonnistui: {e}")
 
-        # Luetaan akku ja tila
         if self.vehicle and 'charging' in self.vehicle.domains:
             charging_domain = self.vehicle.domains['charging']
             
@@ -156,9 +234,10 @@ class ID4Controller:
                 }
                 update_firebase("carStatus", data)
                 print(f"📊 [STATUS] Akku: {soc} % ({range_km} km) | Tila: {charging_status}")
-                return
+                return int(soc)
 
         print("⚠️ [STATUS] Oikeaa akkutietoa ei saatu, tarkista VW-tunnukset ja kirjautuminen.")
+        return None
 
     def set_charging(self, start=True):
         """ Ohjaa latausta (Aloita / Keskeytä) """
@@ -171,10 +250,10 @@ class ID4Controller:
             try:
                 if start and hasattr(controls, 'startCharging'):
                     controls.startCharging()
-                    print("⚡ [VW CONNECT] Lataus käynnistetty autolta!")
+                    print("⚡ [VW CONNECT] Lataus komennus: KÄYNNISSÄ (11 kW)")
                 elif not start and hasattr(controls, 'stopCharging'):
                     controls.stopCharging()
-                    print("💤 [VW CONNECT] Lataus tauotettu autolta!")
+                    print("💤 [VW CONNECT] Lataus komennus: KESKEYTETTY (Odottaa halpaa yötä)")
             except Exception as e:
                 print(f"[VW CONNECT ERROR] Latauskomennon lähetys epäonnistui: {e}")
 
@@ -190,29 +269,35 @@ def main():
 
     while True:
         try:
-            # 1. Päivitä auton tila autolta -> Firebaseen
-            controller.update_status_to_firebase()
+            # 1. Päivitä auton todellinen tila autolta -> Firebaseen
+            current_soc = controller.update_status_to_firebase()
+            if current_soc is None:
+                current_soc = 60  # Varmuuslukema jos yhteys tilapäisesti poikki
 
             # 2. Lue käyttäjän puhelimesta valitsema tila
             config = get_firebase_state()
-            mode = config.get("mode", "SMART")
+            mode = config.get("mode", "IMMEDIATE") # Oletus: Heti-lataus, ellei puhelimesta valita SMART
             deadline = config.get("deadline", "07:00")
             target_soc = config.get("targetSoc", 80)
 
-            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Tila: {mode} | Tavoite: {target_soc}% klo {deadline}")
+            now_str = datetime.datetime.now().strftime('%H:%M:%S')
 
+            # VAIHE A: Käyttäjä ei ole valinnut Älylatausta tai on valinnut Heti-latauksen
             if mode == "IMMEDIATE":
+                print(f"[{now_str}] Tila: HETI-LATAUS | Akku: {current_soc}% -> Ladataan täydellä teholla!")
                 controller.set_charging(True)
+
+            # VAIHE B: ÄLYLATAUS (Valitaan halvimmat tunnit ja varmistetaan valmistuminen deadlineen)
             elif mode == "SMART":
-                prices = get_spot_prices()
-                if prices:
-                    # Yksinkertainen hintaohjaus: ladataan alle 8 c/kWh tai aamuyöllä
-                    current_price = prices[0].get('PriceWithTax', 0.0)
-                    now_hour = datetime.datetime.now().hour
-                    if current_price < 0.08 or (1 <= now_hour <= 5):
-                        controller.set_charging(True)
-                    else:
-                        controller.set_charging(False)
+                spot_prices = get_spot_prices()
+                should_charge, reason, _ = calculate_smart_schedule(
+                    current_soc=current_soc,
+                    target_soc=target_soc,
+                    deadline_str=deadline,
+                    spot_prices=spot_prices
+                )
+                print(f"[{now_str}] ÄLYLATAUS: {reason}")
+                controller.set_charging(should_charge)
 
         except Exception as e:
             print(f"[DAEMON ERROR] Odottamaton virhe silmukassa: {e}")
@@ -222,3 +307,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```

@@ -32,7 +32,7 @@ except (ImportError, AttributeError):
 FIREBASE_URL = "https://jussid-ede86-default-rtdb.europe-west1.firebasedatabase.app"
 
 VW_USERNAME = "jussi.parikka@gmail.com"
-VW_PASSWORD = "OMA_SALASANA_TAHAN"          # Varmista oma salasanasi
+VW_PASSWORD = "R0manialainen2025"          # Varmista oma salasanasi
 VW_VIN      = "WVGZZZE2ZNP017960"
 
 BATTERY_CAPACITY_KWH = 77.0  # ID.4 GTX nettokapasiteetti

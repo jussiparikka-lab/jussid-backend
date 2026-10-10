@@ -196,10 +196,10 @@ class ID4Controller:
                     found_vins = list(self.weconnect.vehicles.keys())
                     print(f"⚠️ [VW CONNECT ERROR] VIN {VW_VIN} ei löytynyt! Tilin autot: {found_vins}")
             except Exception as e:
+                import traceback
                 print(f"❌ [VW CONNECT ERROR] Kirjautumisvirhe: {e}")
-
-    def update_status_to_firebase(self):
-        """ Hakee tuoreen akkutiedon autolta ja päivittää sen Firebaseen """
+                print("[VW CONNECT DIAGNOSTIIKKA]:")
+                traceback.print_exc()
         if not self.vehicle:
             self.connect()
 

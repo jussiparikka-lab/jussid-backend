@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+import os
 import time
+import json
 import requests
 import traceback
 from datetime import datetime, timedelta
@@ -8,9 +10,10 @@ from weconnect import weconnect
 
 app = Flask(__name__)
 
-VW_USERNAME = "jussi.parikka@gmail.com"
-VW_PASSWORD = "R0manialainen2025"  # <-- Laita tähän oikea VW ID -salasanasi
-VW_VIN = "WVGZZZE2ZNP017960"
+VW_USERNAME = os.environ.get("VW_USERNAME", "jussi.parikka@gmail.com")
+VW_PASSWORD = os.environ.get("VW_PASSWORD", "R0manialainen2025")
+VW_VIN = os.environ.get("VW_VIN", "WVGZZZE2ZNP017960")
+VW_TOKEN_STR = os.environ.get("VW_TOKEN", "").strip()
 
 FIREBASE_URL = "https://jussid-ede86-default-rtdb.europe-west1.firebasedatabase.app"
 
@@ -23,7 +26,7 @@ car_state = {
 }
 
 def get_spot_prices():
-    """ Hakee kuluvan vuorokauden spot-hinnat Pörssisähkö APIsta """
+    """Hakee kuluvan vuorokauden spot-hinnat Pörssisähkö APIsta."""
     try:
         url = "https://api.porssisahko.net/v1/latest-prices.json"
         res = requests.get(url, timeout=10)
@@ -34,7 +37,7 @@ def get_spot_prices():
     return []
 
 def calculate_smart_schedule(current_soc, target_soc, deadline_str, prices):
-    """ Laskee halvimmat tuntijaksot lataukselle ennen määräaikaa """
+    """Laskee halvimmat tuntijaksot lataukselle ennen määräaikaa."""
     if not prices:
         return True  # Jos hintoja ei saada, ladataan varmuuden vuoksi
 
@@ -76,22 +79,58 @@ def calculate_smart_schedule(current_soc, target_soc, deadline_str, prices):
 class ID4Daemon:
     def __init__(self):
         self.weconnect = None
+        self.token_file_path = "/tmp/weconnect.token"
+
+    def setup_token_file(self):
+        """Kirjoittaa tokenin tiedostoon jos annettu ympäristömuuttujana."""
+        if VW_TOKEN_STR:
+            try:
+                with open(self.token_file_path, "w", encoding="utf-8") as f:
+                    f.write(VW_TOKEN_STR)
+                print("🔑 [VW CONNECT] VW_TOKEN ladattu ympäristömuuttujasta tiedostoon.")
+                return True
+            except Exception as e:
+                print(f"⚠️ [TOKEN VIRHE] Ei voitu kirjoittaa token-tiedostoa: {e}")
+        return False
 
     def connect(self):
         print(f"[VW CONNECT] Kirjaudutaan Volkswagen-palvelimelle ({VW_USERNAME})...")
+        self.setup_token_file()
+
         try:
-            # Käytetään tuettuja parametreja (ei vanhentunutta loginInit-parametria)
-            self.weconnect = weconnect.WeConnect(
-                username=VW_USERNAME,
-                password=VW_PASSWORD,
-                updateAfterLogin=True
-            )
+            # Jos token-tiedosto on olemassa, käytetään sitä suoraan
+            if os.path.exists(self.token_file_path):
+                self.weconnect = weconnect.WeConnect(
+                    username=VW_USERNAME,
+                    password=VW_PASSWORD,
+                    tokenfile=self.token_file_path,
+                    updateAfterLogin=True
+                )
+            else:
+                self.weconnect = weconnect.WeConnect(
+                    username=VW_USERNAME,
+                    password=VW_PASSWORD,
+                    updateAfterLogin=True
+                )
+
             print(f"✅ [VW CONNECT] Yhdistetty autoon: {VW_VIN}")
             return True
+
         except Exception as e:
             print(f"❌ [VW CONNECT ERROR] Kirjautumisvirhe: {e}")
             print("[VW CONNECT DIAGNOSTIIKKA]:")
             traceback.print_exc()
+
+            # Tarkistetaan onko WeConnectin sessiolokiin tallentunut virhevastetta
+            try:
+                if hasattr(self, 'weconnect') and self.weconnect and hasattr(self.weconnect, 'session'):
+                    last_resp = getattr(self.weconnect.session, 'last_response', None)
+                    if last_resp:
+                        print(f"DEBUG Response status: {last_resp.status_code}")
+                        print(f"DEBUG Response preview: {last_resp.text[:300]}")
+            except Exception:
+                pass
+
             print("⏳ Odotetaan 60 sekuntia ennen uutta yritystä (estetään IP-lukitus)...")
             time.sleep(60)
             return False
@@ -131,7 +170,7 @@ class ID4Daemon:
 
         except Exception as e:
             print(f"⚠️ [PÄIVITYSVIRHE] {e}")
-            self.weconnect = None  # Nollataan sessio, jotta seuraavalla kierroksella kirjaudutaan uudelleen
+            self.weconnect = None  # Nollataan sessio uutta kirjautumista varten
 
     def run_control_loop(self):
         while True:
@@ -172,4 +211,5 @@ def start_daemon():
 start_daemon()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)

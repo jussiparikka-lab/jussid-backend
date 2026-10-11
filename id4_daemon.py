@@ -49,9 +49,15 @@ def init_weconnect():
             tokenfile=".vw_tokens.json"
         )
 
+        # Asetetaan VAAN CHARGING domain ennen kirjautumista
+        try:
+            weconnect_instance.selective = [Domain.CHARGING]
+        except Exception:
+            pass
+
         if not os.path.exists(".vw_tokens.json"):
             auth_state["status"] = "WAITING_2FA"
-            logger.info("🔑 [VW CONNECT] Odotetaan 2FA-koodia käyttöliittymästä...")
+            logger.info("🔑 [VW CONNECT] Odotetaan 2FA-koodia...")
             
             timeout = 300
             start = time.time()
@@ -63,34 +69,45 @@ def init_weconnect():
                 time.sleep(2)
 
             code = auth_state["code_submitted"]
-            logger.info(f"📩 [VW CONNECT] Lähetetään koodi: {code}")
+            logger.info(f"📩 [VW CONNECT] Vahvistetaan koodi: {code}")
 
-        # Kirjaudutaan sisään
-        weconnect_instance.login()
+        # TÄRKEÄ: Kirjaudutaan ilman automaattista tilapäivitystä
+        try:
+            weconnect_instance._login()
+        except AttributeError:
+            try:
+                weconnect_instance.login()
+            except Exception as e:
+                logger.warning(f"⚠️ Kirjautumisvaroitus: {e}")
+        except Exception as e:
+            logger.warning(f"⚠️ Kirjautumisvaroitus: {e}")
 
-        # Haetaan vain lataus- ja akkudomain (ohitetaan location-domain)
+        # Päivitetään VAAN CHARGING domain täysin eristettynä
         try:
             weconnect_instance.update(selective=[Domain.CHARGING])
         except Exception as update_err:
-            logger.warning(f"⚠️ Osittainen päivitysvaroitus: {update_err}")
+            logger.warning(f"⚠️ Ohitetaan päivitysvirhe: {update_err}")
 
-        # Haetaan akkutiedot
-        if hasattr(weconnect_instance, 'vehicles') and weconnect_instance.vehicles:
-            for vin, vehicle in weconnect_instance.vehicles.items():
-                if hasattr(vehicle, 'domains') and vehicle.domains:
-                    if 'charging' in vehicle.domains:
-                        charging = vehicle.domains['charging']
-                        if 'batteryStatus' in charging:
-                            bat = charging['batteryStatus']
-                            if hasattr(bat, 'currentSOC_pct') and bat.currentSOC_pct.value is not None:
-                                car_state["currentSoc"] = int(bat.currentSOC_pct.value)
-                            if hasattr(bat, 'cruisingRangeElectric_km') and bat.cruisingRangeElectric_km.value is not None:
-                                car_state["rangeKm"] = int(bat.cruisingRangeElectric_km.value)
+        # Luetaan akkutiedot
+        try:
+            if hasattr(weconnect_instance, 'vehicles') and weconnect_instance.vehicles:
+                for vin, vehicle in weconnect_instance.vehicles.items():
+                    if hasattr(vehicle, 'domains') and vehicle.domains:
+                        if 'charging' in vehicle.domains:
+                            charging = vehicle.domains['charging']
+                            if 'batteryStatus' in charging:
+                                bat = charging['batteryStatus']
+                                if hasattr(bat, 'currentSOC_pct') and bat.currentSOC_pct.value is not None:
+                                    car_state["currentSoc"] = int(bat.currentSOC_pct.value)
+                                if hasattr(bat, 'cruisingRangeElectric_km') and bat.cruisingRangeElectric_km.value is not None:
+                                    car_state["rangeKm"] = int(bat.cruisingRangeElectric_km.value)
+        except Exception as read_err:
+            logger.warning(f"⚠️ Virhe datan lukemisessa: {read_err}")
 
         auth_state["status"] = "CONNECTED"
         auth_state["message"] = "VW Connect Yhdistetty!"
         car_state["standby"] = False
-        logger.info(f"✅ [VW CONNECT] Tiedot haettu! Akku: {car_state['currentSoc']}%")
+        logger.info(f"✅ [VW CONNECT] Valmis! Akku: {car_state['currentSoc']}%")
         return True
 
     except Exception as e:

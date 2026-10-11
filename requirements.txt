@@ -1,3 +1,5 @@
 requests
-weconnect>=0.60.11
 flask
+carconnectivity
+carconnectivity-connector-volkswagen
+weconnect>=0.60.11

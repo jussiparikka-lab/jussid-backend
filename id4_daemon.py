@@ -43,21 +43,22 @@ def init_weconnect():
         
         logger.info("🚀 [VW CONNECT] Aloitetaan WeConnect-autentikointi...")
         
-        weconnect_instance = wc.WeConnect(
-            username=VW_USERNAME,
-            password=VW_PASSWORD,
-            tokenfile=".vw_tokens.json"
-        )
-
-        # Asetetaan VAAN CHARGING domain ennen kirjautumista
+        # Estetään automaattinen päivitys alustuksessa (updateAfterLogin=False)
         try:
-            weconnect_instance.selective = [Domain.CHARGING]
-        except Exception:
-            pass
+            weconnect_instance = wc.WeConnect(
+                username=VW_USERNAME,
+                password=VW_PASSWORD,
+                tokenfile=".vw_tokens.json",
+                updateAfterLogin=False,
+                disabledDomains=[Domain.PARKING, Domain.READINESS]
+            )
+        except KeyError as ke:
+            logger.warning(f"⚠️ Ohitetaan alustuksen KeyError: {ke}")
+            return False
 
         if not os.path.exists(".vw_tokens.json"):
             auth_state["status"] = "WAITING_2FA"
-            logger.info("🔑 [VW CONNECT] Odotetaan 2FA-koodia...")
+            logger.info("🔑 [VW CONNECT] Odotetaan 2FA-koodia käyttöliittymästä...")
             
             timeout = 300
             start = time.time()
@@ -71,24 +72,21 @@ def init_weconnect():
             code = auth_state["code_submitted"]
             logger.info(f"📩 [VW CONNECT] Vahvistetaan koodi: {code}")
 
-        # TÄRKEÄ: Kirjaudutaan ilman automaattista tilapäivitystä
+        # Kirjaudutaan turvallisesti
         try:
-            weconnect_instance._login()
-        except AttributeError:
-            try:
-                weconnect_instance.login()
-            except Exception as e:
-                logger.warning(f"⚠️ Kirjautumisvaroitus: {e}")
-        except Exception as e:
-            logger.warning(f"⚠️ Kirjautumisvaroitus: {e}")
+            weconnect_instance.login()
+        except KeyError as ke:
+            logger.warning(f"⚠️ Ohitetaan kirjautumisen KeyError: {ke}")
+        except Exception as login_err:
+            logger.warning(f"⚠️ Kirjautumisvaroitus: {login_err}")
 
-        # Päivitetään VAAN CHARGING domain täysin eristettynä
+        # Päivitetään VAIN akku- ja lataustiedot
         try:
             weconnect_instance.update(selective=[Domain.CHARGING])
         except Exception as update_err:
             logger.warning(f"⚠️ Ohitetaan päivitysvirhe: {update_err}")
 
-        # Luetaan akkutiedot
+        # Luetaan akkutiedot suojatusti
         try:
             if hasattr(weconnect_instance, 'vehicles') and weconnect_instance.vehicles:
                 for vin, vehicle in weconnect_instance.vehicles.items():
@@ -102,7 +100,7 @@ def init_weconnect():
                                 if hasattr(bat, 'cruisingRangeElectric_km') and bat.cruisingRangeElectric_km.value is not None:
                                     car_state["rangeKm"] = int(bat.cruisingRangeElectric_km.value)
         except Exception as read_err:
-            logger.warning(f"⚠️ Virhe datan lukemisessa: {read_err}")
+            logger.warning(f"⚠️ Datan lukuvirhe: {read_err}")
 
         auth_state["status"] = "CONNECTED"
         auth_state["message"] = "VW Connect Yhdistetty!"

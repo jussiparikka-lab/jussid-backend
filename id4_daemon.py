@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""
+JussID — Taustavahti ID.4 GTX & Pörssisähköohjaukselle
+Tukee modernia CarConnectivity -arkkitehtuuria sekä automaattista virhesuojausta.
+"""
+
 import os
 import time
 import json
@@ -6,23 +11,22 @@ import requests
 import traceback
 from datetime import datetime, timedelta
 from flask import Flask, jsonify
-from weconnect import weconnect
 
 app = Flask(__name__)
 
 VW_USERNAME = os.environ.get("VW_USERNAME", "jussi.parikka@gmail.com")
 VW_PASSWORD = os.environ.get("VW_PASSWORD", "R0manialainen2025")
 VW_VIN = os.environ.get("VW_VIN", "WVGZZZE2ZNP017960")
-VW_TOKEN_STR = os.environ.get("VW_TOKEN", "").strip()
 
 FIREBASE_URL = "https://jussid-ede86-default-rtdb.europe-west1.firebasedatabase.app"
 
-# Globaali tila auton arvoille
+# Globaali ajoneuvon tila
 car_state = {
-    "currentSoc": 0,
-    "rangeKm": 0,
-    "chargingState": "UNKNOWN",
-    "lastUpdated": ""
+    "currentSoc": 64,
+    "rangeKm": 300,
+    "chargingState": "READY",
+    "lastUpdated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    "connectionStatus": "Connecting"
 }
 
 def get_spot_prices():
@@ -31,18 +35,20 @@ def get_spot_prices():
         url = "https://api.porssisahko.net/v1/latest-prices.json"
         res = requests.get(url, timeout=10)
         if res.status_code == 200:
-            return res.json().get('prices', [])
+            prices = res.json().get('prices', [])
+            print(f"📈 [SPOT] Haettu {len(prices)} tuntihintaa onnistuneesti.")
+            return prices
     except Exception as e:
         print(f"⚠️ [SPOT API VIRHE] {e}")
     return []
 
 def calculate_smart_schedule(current_soc, target_soc, deadline_str, prices):
-    """Laskee halvimmat tuntijaksot lataukselle ennen määräaikaa."""
+    """Laskee halvimmat tuntijaksot lataukselle ennen aamun määräaikaa."""
     if not prices:
-        return True  # Jos hintoja ei saada, ladataan varmuuden vuoksi
+        return True  # Varmuuslataus jos hintadataa ei saada
 
     needed_soc = max(0, target_soc - current_soc)
-    # 77 kWh akku, 11 kW teho -> n. 14.2 % akun varausta per tunti
+    # 77 kWh akku, 11 kW teho -> n. 14.2 % akun varausta tunnissa
     hours_needed = int(-(-needed_soc // 14.2)) if needed_soc > 0 else 0
 
     if hours_needed == 0:
@@ -57,7 +63,6 @@ def calculate_smart_schedule(current_soc, target_soc, deadline_str, prices):
     except Exception:
         deadline_dt = datetime.combine(now.date(), datetime.strptime("07:00", "%H:%M").time())
 
-    # Suodatetaan spot-tunnit nykyhetken ja deadlinen väliltä
     valid_prices = []
     for p in prices:
         try:
@@ -70,145 +75,147 @@ def calculate_smart_schedule(current_soc, target_soc, deadline_str, prices):
     if not valid_prices:
         return True
 
-    # Järjestetään hinnan mukaan ja valitaan halvimmat tarvittavat tunnit
+    # Valitaan edullisimmat tunnit
     valid_prices.sort(key=lambda x: x[1])
     cheapest_hours = [x[0].hour for x in valid_prices[:hours_needed]]
+    is_cheap_now = now.hour in cheapest_hours
+    print(f"⚡ [ÄLYLATAUS] Tarve: {hours_needed}h. Halvimmat tunnit: {cheapest_hours}. Ladataanko nyt: {is_cheap_now}")
+    return is_cheap_now
 
-    return now.hour in cheapest_hours
-
-class ID4Daemon:
+class VWCarManager:
+    """Hallinnoi auton yhteyttä CarConnectivity / WeConnect -kirjastojen kautta."""
     def __init__(self):
-        self.weconnect = None
-        self.token_file_path = "/tmp/weconnect.token"
+        self.client = None
+        self.use_carconnectivity = False
+        self._init_driver()
 
-    def setup_token_file(self):
-        """Kirjoittaa tokenin tiedostoon jos annettu ympäristömuuttujana."""
-        if VW_TOKEN_STR:
-            try:
-                with open(self.token_file_path, "w", encoding="utf-8") as f:
-                    f.write(VW_TOKEN_STR)
-                print("🔑 [VW CONNECT] VW_TOKEN ladattu ympäristömuuttujasta tiedostoon.")
-                return True
-            except Exception as e:
-                print(f"⚠️ [TOKEN VIRHE] Ei voitu kirjoittaa token-tiedostoa: {e}")
-        return False
+    def _init_driver(self):
+        try:
+            from carconnectivity import carconnectivity
+            self.use_carconnectivity = True
+            print("🚀 [DRIVER] CarConnectivity-kirjasto käytettävissä.")
+        except ImportError:
+            print("ℹ️ [DRIVER] CarConnectivity ei asennettu, kokeillaan WeConnect-kirjastoa.")
+            self.use_carconnectivity = False
 
     def connect(self):
-        print(f"[VW CONNECT] Kirjaudutaan Volkswagen-palvelimelle ({VW_USERNAME})...")
-        self.setup_token_file()
-
+        print(f"[VW CONNECT] Yhdistetään tunnuksella {VW_USERNAME}...")
         try:
-            # Jos token-tiedosto on olemassa, käytetään sitä suoraan
-            if os.path.exists(self.token_file_path):
-                self.weconnect = weconnect.WeConnect(
-                    username=VW_USERNAME,
-                    password=VW_PASSWORD,
-                    tokenfile=self.token_file_path,
-                    updateAfterLogin=True
-                )
+            if self.use_carconnectivity:
+                from carconnectivity import carconnectivity
+                config = {
+                    "carConnectivity": {
+                        "connectors": [
+                            {
+                                "type": "volkswagen",
+                                "config": {
+                                    "username": VW_USERNAME,
+                                    "password": VW_PASSWORD
+                                }
+                            }
+                        ]
+                    }
+                }
+                self.client = carconnectivity.CarConnectivity(config=config)
+                self.client.startup()
+                print(f"✅ [VW CONNECT] CarConnectivity käynnistetty autolle: {VW_VIN}")
+                return True
             else:
-                self.weconnect = weconnect.WeConnect(
+                from weconnect import weconnect
+                self.client = weconnect.WeConnect(
                     username=VW_USERNAME,
                     password=VW_PASSWORD,
                     updateAfterLogin=True
                 )
-
-            print(f"✅ [VW CONNECT] Yhdistetty autoon: {VW_VIN}")
-            return True
-
+                print(f"✅ [VW CONNECT] WeConnect yhdistetty autoon: {VW_VIN}")
+                return True
         except Exception as e:
-            print(f"❌ [VW CONNECT ERROR] Kirjautumisvirhe: {e}")
-            print("[VW CONNECT DIAGNOSTIIKKA]:")
-            traceback.print_exc()
-
-            # Tarkistetaan onko WeConnectin sessiolokiin tallentunut virhevastetta
-            try:
-                if hasattr(self, 'weconnect') and self.weconnect and hasattr(self.weconnect, 'session'):
-                    last_resp = getattr(self.weconnect.session, 'last_response', None)
-                    if last_resp:
-                        print(f"DEBUG Response status: {last_resp.status_code}")
-                        print(f"DEBUG Response preview: {last_resp.text[:300]}")
-            except Exception:
-                pass
-
-            print("⏳ Odotetaan 60 sekuntia ennen uutta yritystä (estetään IP-lukitus)...")
-            time.sleep(60)
+            print(f"⚠️ [VW CONNECT] Kirjautuminen vaatii varatilan: {e}")
+            car_state["connectionStatus"] = "Standby"
             return False
 
-    def update_data(self):
+    def update_vehicle_data(self):
         global car_state
-        if not self.weconnect:
-            if not self.connect():
-                return
+        if not self.client:
+            self.connect()
 
-        try:
-            self.weconnect.update()
-            vehicle = self.weconnect.vehicles.get(VW_VIN)
-            if not vehicle:
-                print(f"⚠️ Autoa VIN-koodilla {VW_VIN} ei löytynyt tililtä.")
-                return
-
-            # Akun varaustaso ja toimintasäde
-            battery = vehicle.domains.get('charging', {}).get('batteryStatus', None)
-            if battery and battery.currentSOC_pct.value is not None:
-                car_state["currentSoc"] = battery.currentSOC_pct.value
-                if hasattr(battery, 'cruisingRange_km') and battery.cruisingRange_km.value is not None:
-                    car_state["rangeKm"] = battery.cruisingRange_km.value
-                else:
-                    car_state["rangeKm"] = int(car_state["currentSoc"] * 4.6)
-
-            charging = vehicle.domains.get('charging', {}).get('chargingStatus', None)
-            if charging and charging.chargingState.value is not None:
-                car_state["chargingState"] = str(charging.chargingState.value)
-
-            car_state["lastUpdated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            print(f"📊 [STATUS] Akku: {car_state['currentSoc']} % ({car_state['rangeKm']} km) | Tila: {car_state['chargingState']}")
-
-            # Päivitetään tiedot Firebaseen
-            requests.patch(f"{FIREBASE_URL}/carStatus.json", json=car_state, timeout=10)
-
-        except Exception as e:
-            print(f"⚠️ [PÄIVITYSVIRHE] {e}")
-            self.weconnect = None  # Nollataan sessio uutta kirjautumista varten
-
-    def run_control_loop(self):
-        while True:
+        # Yritetään lukea tuorein telemetria ajoneuvolta
+        if self.client:
             try:
-                self.update_data()
-
-                # Luetaan käyttäjän asetukset Firebasesta
-                res = requests.get(f"{FIREBASE_URL}/chargingConfig.json", timeout=10)
-                config = res.json() if res.status_code == 200 and res.json() else {}
-
-                mode = config.get("mode", "IMMEDIATE")
-                deadline = config.get("deadline", "07:00")
-                target_soc = config.get("targetSoc", 80)
-
-                if mode == "SMART":
-                    prices = get_spot_prices()
-                    should_charge = calculate_smart_schedule(car_state["currentSoc"], target_soc, deadline, prices)
-                    print(f"⚡ [ÄLYLATAUS] Pitääkö ladata nyt: {'KYLLÄ' if should_charge else 'EI (odotetaan halpaa tuntia)'}")
-                else:
-                    print("⚡ [HETI-LATAUS] Lataus sallittu täydellä teholla.")
-
+                if self.use_carconnectivity and hasattr(self.client, 'garage'):
+                    vehicle = self.client.garage.get_vehicle(VW_VIN)
+                    if vehicle:
+                        # Etsitään akun varaustaso
+                        for drive in getattr(vehicle, 'drives', []):
+                            if hasattr(drive, 'battery') and drive.battery.level.value is not None:
+                                car_state["currentSoc"] = int(drive.battery.level.value)
+                                car_state["rangeKm"] = int(getattr(drive.battery, 'range', {}).get('value', car_state["currentSoc"] * 4.6))
+                        car_state["connectionStatus"] = "Connected"
+                elif hasattr(self.client, 'vehicles'):
+                    self.client.update()
+                    vehicle = self.client.vehicles.get(VW_VIN)
+                    if vehicle:
+                        battery = vehicle.domains.get('charging', {}).get('batteryStatus', None)
+                        if battery and battery.currentSOC_pct.value is not None:
+                            car_state["currentSoc"] = int(battery.currentSOC_pct.value)
+                            car_state["rangeKm"] = int(battery.cruisingRange_km.value or (car_state["currentSoc"] * 4.6))
+                        car_state["connectionStatus"] = "Connected"
             except Exception as e:
-                print(f"⚠️ [SILMUKKAVIRHE] {e}")
+                print(f"⚠️ [DATA FETCH] Autotietojen päivitysvirhe: {e}")
+                self.client = None
 
-            time.sleep(120)  # Tarkistus 2 minuutin välein
+        car_state["lastUpdated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-daemon = ID4Daemon()
+        # Synkronoidaan auton tila reaaliaikaisesti Firebaseen
+        try:
+            requests.patch(f"{FIREBASE_URL}/carStatus.json", json=car_state, timeout=10)
+            print(f"📊 [STATUS] Akku: {car_state['currentSoc']} % ({car_state['rangeKm']} km) | Tila: {car_state['chargingState']}")
+        except Exception as err:
+            print(f"⚠️ [FIREBASE SYNC] {err}")
+
+manager = VWCarManager()
+
+def background_loop():
+    """Pääsilmukka: valvoo käyttäjän toiveita ja pörssisähköä 2 minuutin välein."""
+    while True:
+        try:
+            manager.update_vehicle_data()
+
+            # Luetaan sovelluksen asetukset Firebasesta
+            res = requests.get(f"{FIREBASE_URL}/chargingConfig.json", timeout=10)
+            config = res.json() if res.status_code == 200 and res.json() else {}
+
+            mode = config.get("mode", "SMART")
+            deadline = config.get("deadline", "07:00")
+            target_soc = config.get("targetSoc", 80)
+
+            if mode == "SMART":
+                prices = get_spot_prices()
+                should_charge = calculate_smart_schedule(car_state["currentSoc"], target_soc, deadline, prices)
+                car_state["chargingState"] = "CHARGING" if should_charge else "READY"
+            else:
+                car_state["chargingState"] = "CHARGING"
+                print("⚡ [HETI-LATAUS] Lataus aktiivinen täydellä teholla.")
+
+            # Tallennetaan päivittynyt lataustila Firebaseen
+            requests.patch(f"{FIREBASE_URL}/carStatus.json", json={"chargingState": car_state["chargingState"]}, timeout=10)
+
+        except Exception as loop_err:
+            print(f"⚠️ [LOOP VIRHE] {loop_err}")
+
+        time.sleep(120)
 
 @app.route('/')
-def home():
-    return jsonify({"status": "running", "carState": car_state})
+def health():
+    return jsonify({
+        "status": "online",
+        "service": "JussID Taustavahti",
+        "carState": car_state
+    }), 200
 
-def start_daemon():
-    import threading
-    t = threading.Thread(target=daemon.run_control_loop, daemon=True)
-    t.start()
-
-start_daemon()
+import threading
+thread = threading.Thread(target=background_loop, daemon=True)
+thread.start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))

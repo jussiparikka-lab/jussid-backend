@@ -33,7 +33,7 @@ car_state = {
 
 spot_data = {"hours": [], "cheapHours": [], "chargeNow": False}
 
-def fetch_vw_id_data():
+def fetch_official_vw_data():
     global car_state, auth_state
     
     token = os.environ.get("VW_TOKEN", VW_TOKEN)
@@ -45,24 +45,21 @@ def fetch_vw_id_data():
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0"
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)"
     }
 
     try:
-        # 1. Haetaan ajoneuvolistaus uuden ID-rajapinnan kautta
-        list_url = "https://mobileapi.id.vin/v1/vehicles"
-        res = requests.get(list_url, headers=headers, timeout=10)
+        # Virallinen Volkswagen ID / WeConnect -rajapinta
+        base_url = "https://api.connect.vw.com/v1/vehicles"
+        res = requests.get(base_url, headers=headers, timeout=10)
 
         if res.status_code == 200:
             data = res.json()
             vehicles = data.get("data", []) if isinstance(data, dict) else data
             if isinstance(vehicles, list) and len(vehicles) > 0:
                 vin = vehicles[0].get("vin")
-                
-                # 2. Haetaan auton tilatiedot
                 if vin:
-                    status_url = f"https://mobileapi.id.vin/v1/vehicles/{vin}/status"
-                    status_res = requests.get(status_url, headers=headers, timeout=10)
+                    status_res = requests.get(f"{base_url}/{vin}/status", headers=headers, timeout=10)
                     if status_res.status_code == 200:
                         s_data = status_res.json()
                         battery = s_data.get("batteryStatus", {})
@@ -72,10 +69,10 @@ def fetch_vw_id_data():
                             car_state["rangeKm"] = int(battery["cruisingRangeElectric_km"])
 
             auth_state["status"] = "CONNECTED"
-            logger.info(f"✅ [VW API] Tiedot ladattu! Akku: {car_state['currentSoc']}%")
+            logger.info(f"✅ [VW API] Tiedot haettu onnistuneesti! Akku: {car_state['currentSoc']}%")
             return True
         else:
-            logger.warning(f"⚠️ [VW API] Tila koodi: {res.status_code}. Käytetään tallennettua dataa.")
+            logger.warning(f"⚠️ [VW API] Rajapinta palautti tilakoodin {res.status_code}. Näytetään olemassa oleva tila.")
             auth_state["status"] = "CONNECTED"
             return True
 
@@ -100,7 +97,7 @@ def fetch_spot_prices():
 
 def daemon_loop():
     while True:
-        fetch_vw_id_data()
+        fetch_official_vw_data()
         fetch_spot_prices()
         car_state["lastUpdated"] = time.strftime("%H:%M:%S")
         time.sleep(120)

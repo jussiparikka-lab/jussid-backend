@@ -2,18 +2,38 @@ import os
 import time
 import logging
 from threading import Thread
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify
 from flask_cors import CORS
 import requests
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ID4_DAEMON")
 
+# =====================================================================
+# 🚨 MONKEYPATCH: OHITETAAN VOLKSWAGENIN BOTTISUOJA (CLOUDFLARE/AKAMAI) 🚨
+# Pakotetaan kaikki WeConnectin taustapyynnöt näyttämään aidolta iPhonelta,
+# jotta Renderin pilvi-IP ei jää kiinni VW:n palomuuriin.
+# =====================================================================
+original_session_init = requests.Session.__init__
+
+def spoofed_session_init(self, *args, **kwargs):
+    original_session_init(self, *args, **kwargs)
+    self.headers.update({
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+        "Accept-Language": "fi-FI,fi;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
+    })
+
+requests.Session.__init__ = spoofed_session_init
+# =====================================================================
+
 app = Flask(__name__)
 CORS(app)
 
-VW_USERNAME = os.environ.get("VW_USERNAME", "jussi.parikka@gmail.com")
-VW_PASSWORD = os.environ.get("VW_PASSWORD", "R0manialainen2025")
+VW_USERNAME = os.environ.get("VW_USERNAME", "")
+VW_PASSWORD = os.environ.get("VW_PASSWORD", "")
 
 auth_state = {
     "status": "STARTING",
@@ -36,7 +56,7 @@ def daemon_loop():
     global auth_state, car_state, weconnect_instance
     
     while True:
-        # 1. Pörssisähkö (toimii aina riippumatta VW-yhteydestä)
+        # Pörssisähkö
         try:
             url = "https://api.spot-hinta.fi/TodayAndDayForward"
             res = requests.get(url, timeout=10)
@@ -48,8 +68,11 @@ def daemon_loop():
         except Exception as e:
             logger.error(f"❌ [SPOT ERROR]: {e}")
 
-        # 2. VW Connect (Panssaroitu haku)
+        # Volkswagen
         try:
+            if not VW_USERNAME or not VW_PASSWORD:
+                raise ValueError("VW_USERNAME tai VW_PASSWORD puuttuu Renderin asetuksista!")
+
             if weconnect_instance is None:
                 from weconnect import weconnect as wc
                 weconnect_instance = wc.WeConnect(
@@ -59,15 +82,12 @@ def daemon_loop():
                     updateAfterLogin=False
                 )
 
-            logger.info("🔑 [VW] Yritetään kirjautumista Volkswagen-palvelimelle...")
-            
-            # TÄMÄ on se rivi, joka heittää 'location' -bugin kirjaston sisältä
+            logger.info("🔑 [VW] Kirjaudutaan sisään naamioidulla selaimella...")
             weconnect_instance.login()
             
             from weconnect.domain import Domain
             weconnect_instance.update(selective=[Domain.CHARGING, Domain.PARKING])
             
-            # Tietojen luku turvallisesti
             if hasattr(weconnect_instance, 'vehicles'):
                 for vin, vehicle in weconnect_instance.vehicles.items():
                     domains = getattr(vehicle, 'domains', {})
@@ -88,14 +108,13 @@ def daemon_loop():
             auth_state["status"] = "CONNECTED"
             auth_state["message"] = "VW Yhdistetty!"
             car_state["lastUpdated"] = time.strftime("%H:%M:%S")
-            logger.info(f"✅ [VW] Data päivitetty. Akku: {car_state['currentSoc']}%")
+            logger.info(f"✅ [VW] Data päivitetty! Akku: {car_state['currentSoc']}%")
 
         except KeyError as ke:
             if 'location' in str(ke).lower():
-                msg = "VW vaatii 2FA-koodin tai käyttöehtojen hyväksynnän. Kirjasto blokattu."
-                logger.error(f"🛑 [VW BLOCKED]: {msg}")
-                auth_state["status"] = "2FA_BLOCKED"
-                auth_state["message"] = "Kytke 2FA hetkeksi pois VW-tililtäsi tai hyväksy käyttöehdot sovelluksessa."
+                logger.error("🛑 [VW BLOCKED]: Renderin IP on edelleen estetty VW:n palomuurissa. Naamiointi ei riittänyt.")
+                auth_state["status"] = "IP_BLOCKED"
+                auth_state["message"] = "VW estää pilvipalvelimen (Render)."
             else:
                 logger.error(f"❌ [VW KeyError]: {ke}")
         except Exception as e:

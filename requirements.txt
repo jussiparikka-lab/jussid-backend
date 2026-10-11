@@ -2,5 +2,3 @@ flask
 flask-cors
 requests
 weconnect
-carconnectivity
-carconnectivity-connector-volkswagen

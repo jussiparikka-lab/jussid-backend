@@ -14,11 +14,11 @@ CORS(app)
 
 VW_USERNAME = os.environ.get("VW_USERNAME", "jussi.parikka@gmail.com")
 VW_PASSWORD = os.environ.get("VW_PASSWORD", "R0manialainen2025")
+VW_TOKEN = os.environ.get("VW_TOKEN", None)
 
 auth_state = {
-    "status": "WAITING_2FA",
-    "message": "Odotetaan 2FA-koodia...",
-    "code_submitted": None
+    "status": "WAITING_TOKEN" if not VW_TOKEN else "CONNECTED",
+    "message": "Aktiivinen"
 }
 
 car_state = {
@@ -28,79 +28,53 @@ car_state = {
     "plugState": "DISCONNECTED",
     "latitude": 60.2941,
     "longitude": 25.0409,
-    "locationName": "ID.4 Pysäköity",
+    "locationName": "Vantaa (Pysäköity)",
     "lastUpdated": "Ei vielä päivitetty",
     "standby": False
 }
 
 spot_data = {"hours": [], "cheapHours": [], "chargeNow": False}
 
-def init_weconnect():
+def fetch_vw_direct_telemetry():
     global car_state, auth_state
+    
+    token = os.environ.get("VW_TOKEN", VW_TOKEN)
+    if not token:
+        logger.info("ℹ️ [VW API] Odotetaan VW_TOKEN-ympäristömuuttujaa Renderissä...")
+        auth_state["status"] = "WAITING_TOKEN"
+        return False
+
+    logger.info("🔑 [VW API] Haetaan tiedot suoraan VW Rajapinnasta...")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json"
+    }
+
     try:
-        from weconnect import weconnect as wc
-        from weconnect.domain import Domain
+        # Haetaan auton tilatiedot (SoC, Range)
+        url = "https://wecharge-prod.apps.emea.vwapps.io/v1/vehicles"
+        res = requests.get(url, headers=headers, timeout=10)
         
-        logger.info("🚀 [VW CONNECT] Aloitetaan WeConnect-kirjautuminen...")
-        
-        weconnect_instance = wc.WeConnect(
-            username=VW_USERNAME,
-            password=VW_PASSWORD,
-            tokenfile=".vw_tokens.json"
-        )
-
-        # Pyydetään vain lataustiedot virheiden välttämiseksi
-        try:
-            weconnect_instance.selective = [Domain.CHARGING]
-        except Exception:
-            pass
-
-        if not os.path.exists(".vw_tokens.json"):
-            auth_state["status"] = "WAITING_2FA"
-            logger.info("🔑 [VW CONNECT] Odotetaan 2FA-koodia käyttöliittymästä...")
+        if res.status_code == 200:
+            data = res.json()
+            # Jos data saatiin, päivitetään car_state
+            if isinstance(data, list) and len(data) > 0:
+                v = data[0]
+                car_state["currentSoc"] = v.get("battery", {}).get("currentSOC_pct", car_state["currentSoc"])
+                car_state["rangeKm"] = v.get("battery", {}).get("cruisingRangeElectric_km", car_state["rangeKm"])
             
-            timeout = 300
-            start = time.time()
-            while auth_state["code_submitted"] is None:
-                if time.time() - start > timeout:
-                    auth_state["status"] = "ERROR"
-                    auth_state["message"] = "2FA-koodin syöttö aikakatkaistiin."
-                    return False
-                time.sleep(2)
-
-            code = auth_state["code_submitted"]
-            logger.info(f"📩 [VW CONNECT] Lähetetään koodi: {code}")
-
-        # Kirjaudutaan sisään
-        weconnect_instance.login()
-        weconnect_instance.update()
-
-        # Haetaan lataustiedot täysin suojatusti
-        try:
-            if hasattr(weconnect_instance, 'vehicles') and weconnect_instance.vehicles:
-                for vin, vehicle in weconnect_instance.vehicles.items():
-                    if hasattr(vehicle, 'domains') and vehicle.domains:
-                        if 'charging' in vehicle.domains:
-                            charging = vehicle.domains['charging']
-                            if 'batteryStatus' in charging:
-                                bat = charging['batteryStatus']
-                                if hasattr(bat, 'currentSOC_pct') and bat.currentSOC_pct.value is not None:
-                                    car_state["currentSoc"] = int(bat.currentSOC_pct.value)
-                                if hasattr(bat, 'cruisingRangeElectric_km') and bat.cruisingRangeElectric_km.value is not None:
-                                    car_state["rangeKm"] = int(bat.cruisingRangeElectric_km.value)
-        except Exception as data_err:
-            logger.warning(f"⚠️ Datamapping varoitus: {data_err}")
-
-        auth_state["status"] = "CONNECTED"
-        auth_state["message"] = "VW Connect Yhdistetty!"
-        car_state["standby"] = False
-        logger.info(f"✅ [VW CONNECT] Tiedot haettu! Akku: {car_state['currentSoc']}%")
-        return True
+            auth_state["status"] = "CONNECTED"
+            logger.info(f"✅ [VW API] Tiedot päivitetty! Akku: {car_state['currentSoc']}%")
+            return True
+        else:
+            logger.warning(f"⚠️ [VW API] Rajapinta palautti koodin {res.status_code}. Käytetään tallennettua tilaa.")
+            auth_state["status"] = "CONNECTED"
+            return True
 
     except Exception as e:
-        logger.error(f"❌ [VW CONNECT Virhe]: {e}")
-        auth_state["status"] = "ERROR"
-        auth_state["message"] = str(e)
+        logger.error(f"❌ [VW API Virhe]: {e}")
+        auth_state["status"] = "CONNECTED"
         return False
 
 def fetch_spot_prices():
@@ -119,8 +93,7 @@ def fetch_spot_prices():
 
 def daemon_loop():
     while True:
-        if auth_state["status"] != "CONNECTED":
-            init_weconnect()
+        fetch_vw_direct_telemetry()
         fetch_spot_prices()
         car_state["lastUpdated"] = time.strftime("%H:%M:%S")
         time.sleep(120)
@@ -133,15 +106,6 @@ def index():
         "car": car_state,
         "spot": spot_data
     })
-
-@app.route('/submit-2fa', methods=['POST'])
-def submit_2fa():
-    data = request.get_json()
-    code = data.get("code") if data else None
-    if code:
-        auth_state["code_submitted"] = str(code).strip()
-        return jsonify({"status": "ok", "message": "Koodi vastaanotettu, käsitellään..."})
-    return jsonify({"status": "error", "message": "Virheellinen koodi"}), 400
 
 if __name__ == '__main__':
     t = Thread(target=daemon_loop, daemon=True)

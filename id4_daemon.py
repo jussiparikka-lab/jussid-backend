@@ -13,7 +13,7 @@ app = Flask(__name__)
 CORS(app)
 
 VW_USERNAME = os.environ.get("VW_USERNAME", "jussi.parikka@gmail.com")
-VW_PASSWORD = os.environ.get("VW_PASSWORD", "R0manialainen2025")
+VW_PASSWORD = os.environ.get("VW_PASSWORD", "")
 
 auth_state = {
     "status": "WAITING_2FA",
@@ -39,6 +39,7 @@ def init_weconnect():
     global car_state, auth_state
     try:
         from weconnect import weconnect as wc
+        from weconnect.domain import Domain
         
         logger.info("🚀 [VW CONNECT] Aloitetaan WeConnect-autentikointi...")
         
@@ -64,16 +65,16 @@ def init_weconnect():
             code = auth_state["code_submitted"]
             logger.info(f"📩 [VW CONNECT] Lähetetään koodi: {code}")
 
-        # Suoritetaan kirjautuminen ja napataan 'location'-virhe kiinni
-        try:
-            weconnect_instance.login()
-            weconnect_instance.update()
-        except KeyError as ke:
-            logger.warning(f"⚠️ Ohitetaan puuttuva kenttä päivityksessä: {ke}")
-        except Exception as login_err:
-            logger.error(f"❌ Kirjautumisvirhe: {login_err}")
+        # Kirjaudutaan sisään
+        weconnect_instance.login()
 
-        # Haetaan akku- ja lataustiedot turvallisesti
+        # Haetaan vain lataus- ja akkudomain (ohitetaan location-domain)
+        try:
+            weconnect_instance.update(selective=[Domain.CHARGING])
+        except Exception as update_err:
+            logger.warning(f"⚠️ Osittainen päivitysvaroitus: {update_err}")
+
+        # Haetaan akkutiedot
         if hasattr(weconnect_instance, 'vehicles') and weconnect_instance.vehicles:
             for vin, vehicle in weconnect_instance.vehicles.items():
                 if hasattr(vehicle, 'domains') and vehicle.domains:

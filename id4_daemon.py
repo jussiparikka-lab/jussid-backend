@@ -2,7 +2,7 @@ import os
 import time
 import logging
 from threading import Thread
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify
 from flask_cors import CORS
 import requests
 
@@ -12,8 +12,6 @@ logger = logging.getLogger("ID4_DAEMON")
 app = Flask(__name__)
 CORS(app)
 
-VW_USERNAME = os.environ.get("VW_USERNAME", "jussi.parikka@gmail.com")
-VW_PASSWORD = os.environ.get("VW_PASSWORD", "R0manialainen2025")
 VW_TOKEN = os.environ.get("VW_TOKEN", None)
 
 auth_state = {
@@ -35,7 +33,7 @@ car_state = {
 
 spot_data = {"hours": [], "cheapHours": [], "chargeNow": False}
 
-def fetch_vw_direct_telemetry():
+def fetch_vw_id_data():
     global car_state, auth_state
     
     token = os.environ.get("VW_TOKEN", VW_TOKEN)
@@ -44,31 +42,40 @@ def fetch_vw_direct_telemetry():
         auth_state["status"] = "WAITING_TOKEN"
         return False
 
-    logger.info("🔑 [VW API] Haetaan tiedot suoraan VW Rajapinnasta...")
     headers = {
         "Authorization": f"Bearer {token}",
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0"
     }
 
     try:
-        # Haetaan auton tilatiedot (SoC, Range)
-        url = "https://wecharge-prod.apps.emea.vwapps.io/v1/vehicles"
-        res = requests.get(url, headers=headers, timeout=10)
-        
+        # 1. Haetaan ajoneuvolistaus uuden ID-rajapinnan kautta
+        list_url = "https://mobileapi.id.vin/v1/vehicles"
+        res = requests.get(list_url, headers=headers, timeout=10)
+
         if res.status_code == 200:
             data = res.json()
-            # Jos data saatiin, päivitetään car_state
-            if isinstance(data, list) and len(data) > 0:
-                v = data[0]
-                car_state["currentSoc"] = v.get("battery", {}).get("currentSOC_pct", car_state["currentSoc"])
-                car_state["rangeKm"] = v.get("battery", {}).get("cruisingRangeElectric_km", car_state["rangeKm"])
-            
+            vehicles = data.get("data", []) if isinstance(data, dict) else data
+            if isinstance(vehicles, list) and len(vehicles) > 0:
+                vin = vehicles[0].get("vin")
+                
+                # 2. Haetaan auton tilatiedot
+                if vin:
+                    status_url = f"https://mobileapi.id.vin/v1/vehicles/{vin}/status"
+                    status_res = requests.get(status_url, headers=headers, timeout=10)
+                    if status_res.status_code == 200:
+                        s_data = status_res.json()
+                        battery = s_data.get("batteryStatus", {})
+                        if "currentSOC_pct" in battery:
+                            car_state["currentSoc"] = int(battery["currentSOC_pct"])
+                        if "cruisingRangeElectric_km" in battery:
+                            car_state["rangeKm"] = int(battery["cruisingRangeElectric_km"])
+
             auth_state["status"] = "CONNECTED"
-            logger.info(f"✅ [VW API] Tiedot päivitetty! Akku: {car_state['currentSoc']}%")
+            logger.info(f"✅ [VW API] Tiedot ladattu! Akku: {car_state['currentSoc']}%")
             return True
         else:
-            logger.warning(f"⚠️ [VW API] Rajapinta palautti koodin {res.status_code}. Käytetään tallennettua tilaa.")
+            logger.warning(f"⚠️ [VW API] Tila koodi: {res.status_code}. Käytetään tallennettua dataa.")
             auth_state["status"] = "CONNECTED"
             return True
 
@@ -93,7 +100,7 @@ def fetch_spot_prices():
 
 def daemon_loop():
     while True:
-        fetch_vw_direct_telemetry()
+        fetch_vw_id_data()
         fetch_spot_prices()
         car_state["lastUpdated"] = time.strftime("%H:%M:%S")
         time.sleep(120)

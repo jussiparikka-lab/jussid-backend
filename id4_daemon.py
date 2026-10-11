@@ -2,7 +2,7 @@ import os
 import time
 import logging
 from threading import Thread
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests
 
@@ -12,11 +12,13 @@ logger = logging.getLogger("ID4_DAEMON")
 app = Flask(__name__)
 CORS(app)
 
-VW_TOKEN = os.environ.get("VW_TOKEN", None)
+VW_USERNAME = os.environ.get("VW_USERNAME", "jussi.parikka@gmail.com")
+VW_PASSWORD = os.environ.get("VW_PASSWORD", "R0manialainen2025")
 
 auth_state = {
-    "status": "WAITING_TOKEN" if not VW_TOKEN else "CONNECTED",
-    "message": "Aktiivinen"
+    "status": "WAITING_2FA",
+    "message": "Odotetaan 2FA-koodia...",
+    "code_submitted": None
 }
 
 car_state = {
@@ -26,59 +28,74 @@ car_state = {
     "plugState": "DISCONNECTED",
     "latitude": 60.2941,
     "longitude": 25.0409,
-    "locationName": "Vantaa (Pysäköity)",
+    "locationName": "ID.4 Pysäköity",
     "lastUpdated": "Ei vielä päivitetty",
     "standby": False
 }
 
 spot_data = {"hours": [], "cheapHours": [], "chargeNow": False}
 
-def fetch_official_vw_data():
+def init_weconnect():
     global car_state, auth_state
-    
-    token = os.environ.get("VW_TOKEN", VW_TOKEN)
-    if not token:
-        logger.info("ℹ️ [VW API] Odotetaan VW_TOKEN-ympäristömuuttujaa Renderissä...")
-        auth_state["status"] = "WAITING_TOKEN"
-        return False
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)"
-    }
-
     try:
-        # Virallinen Volkswagen ID / WeConnect -rajapinta
-        base_url = "https://api.connect.vw.com/v1/vehicles"
-        res = requests.get(base_url, headers=headers, timeout=10)
+        from weconnect import weconnect as wc
+        
+        logger.info("🚀 [VW CONNECT] Aloitetaan WeConnect-autentikointi...")
+        
+        weconnect_instance = wc.WeConnect(
+            username=VW_USERNAME,
+            password=VW_PASSWORD,
+            tokenfile=".vw_tokens.json"
+        )
 
-        if res.status_code == 200:
-            data = res.json()
-            vehicles = data.get("data", []) if isinstance(data, dict) else data
-            if isinstance(vehicles, list) and len(vehicles) > 0:
-                vin = vehicles[0].get("vin")
-                if vin:
-                    status_res = requests.get(f"{base_url}/{vin}/status", headers=headers, timeout=10)
-                    if status_res.status_code == 200:
-                        s_data = status_res.json()
-                        battery = s_data.get("batteryStatus", {})
-                        if "currentSOC_pct" in battery:
-                            car_state["currentSoc"] = int(battery["currentSOC_pct"])
-                        if "cruisingRangeElectric_km" in battery:
-                            car_state["rangeKm"] = int(battery["cruisingRangeElectric_km"])
+        if not os.path.exists(".vw_tokens.json"):
+            auth_state["status"] = "WAITING_2FA"
+            logger.info("🔑 [VW CONNECT] Odotetaan 2FA-koodia käyttöliittymästä...")
+            
+            timeout = 300
+            start = time.time()
+            while auth_state["code_submitted"] is None:
+                if time.time() - start > timeout:
+                    auth_state["status"] = "ERROR"
+                    auth_state["message"] = "2FA-koodin syöttö aikakatkaistiin."
+                    return False
+                time.sleep(2)
 
-            auth_state["status"] = "CONNECTED"
-            logger.info(f"✅ [VW API] Tiedot haettu onnistuneesti! Akku: {car_state['currentSoc']}%")
-            return True
-        else:
-            logger.warning(f"⚠️ [VW API] Rajapinta palautti tilakoodin {res.status_code}. Näytetään olemassa oleva tila.")
-            auth_state["status"] = "CONNECTED"
-            return True
+            code = auth_state["code_submitted"]
+            logger.info(f"📩 [VW CONNECT] Lähetetään koodi: {code}")
+
+        # Suoritetaan kirjautuminen ja napataan 'location'-virhe kiinni
+        try:
+            weconnect_instance.login()
+            weconnect_instance.update()
+        except KeyError as ke:
+            logger.warning(f"⚠️ Ohitetaan puuttuva kenttä päivityksessä: {ke}")
+        except Exception as login_err:
+            logger.error(f"❌ Kirjautumisvirhe: {login_err}")
+
+        # Haetaan akku- ja lataustiedot turvallisesti
+        if hasattr(weconnect_instance, 'vehicles') and weconnect_instance.vehicles:
+            for vin, vehicle in weconnect_instance.vehicles.items():
+                if hasattr(vehicle, 'domains') and vehicle.domains:
+                    if 'charging' in vehicle.domains:
+                        charging = vehicle.domains['charging']
+                        if 'batteryStatus' in charging:
+                            bat = charging['batteryStatus']
+                            if hasattr(bat, 'currentSOC_pct') and bat.currentSOC_pct.value is not None:
+                                car_state["currentSoc"] = int(bat.currentSOC_pct.value)
+                            if hasattr(bat, 'cruisingRangeElectric_km') and bat.cruisingRangeElectric_km.value is not None:
+                                car_state["rangeKm"] = int(bat.cruisingRangeElectric_km.value)
+
+        auth_state["status"] = "CONNECTED"
+        auth_state["message"] = "VW Connect Yhdistetty!"
+        car_state["standby"] = False
+        logger.info(f"✅ [VW CONNECT] Tiedot haettu! Akku: {car_state['currentSoc']}%")
+        return True
 
     except Exception as e:
-        logger.error(f"❌ [VW API Virhe]: {e}")
-        auth_state["status"] = "CONNECTED"
+        logger.error(f"❌ [VW CONNECT Virhe]: {e}")
+        auth_state["status"] = "ERROR"
+        auth_state["message"] = str(e)
         return False
 
 def fetch_spot_prices():
@@ -97,7 +114,8 @@ def fetch_spot_prices():
 
 def daemon_loop():
     while True:
-        fetch_official_vw_data()
+        if auth_state["status"] != "CONNECTED":
+            init_weconnect()
         fetch_spot_prices()
         car_state["lastUpdated"] = time.strftime("%H:%M:%S")
         time.sleep(120)
@@ -110,6 +128,15 @@ def index():
         "car": car_state,
         "spot": spot_data
     })
+
+@app.route('/submit-2fa', methods=['POST'])
+def submit_2fa():
+    data = request.get_json()
+    code = data.get("code") if data else None
+    if code:
+        auth_state["code_submitted"] = str(code).strip()
+        return jsonify({"status": "ok", "message": "Koodi vastaanotettu, käsitellään..."})
+    return jsonify({"status": "error", "message": "Virheellinen koodi"}), 400
 
 if __name__ == '__main__':
     t = Thread(target=daemon_loop, daemon=True)

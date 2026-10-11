@@ -1,18 +1,15 @@
 import os
 import time
-import json
 import logging
 from threading import Thread
 from flask import Flask, jsonify
 import requests
 
-# Konfiguroidaan lokitus
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ID4_DAEMON")
 
 app = Flask(__name__)
 
-# Ympäristömuuttujat Renderistä
 VW_USERNAME = os.environ.get("VW_USERNAME", "jussi.parikka@gmail.com")
 VW_PASSWORD = os.environ.get("VW_PASSWORD", "R0manialainen2025")
 VW_TOKEN = os.environ.get("VW_TOKEN", None)
@@ -25,71 +22,68 @@ car_state = {
     "plugState": "DISCONNECTED",
     "latitude": 60.2941,
     "longitude": 25.0409,
-    "locationName": "Päivitetään...",
+    "locationName": "Ladataan autolta...",
     "lastUpdated": "Ei vielä päivitetty",
-    "standby": False  # Poistetaan manuaalisäätömoodi
+    "standby": False
 }
 
 spot_data = {"hours": [], "cheapHours": [], "chargeNow": False}
 
-def connect_and_update_vw():
+def update_vw_data():
     global car_state
-    
-    # 1. Jos VW_TOKEN on syötetty Renderiin
-    if VW_TOKEN:
-        logger.info("🔑 [VW CONNECT] Käytetään tallennetua VW_TOKEN-istuntoa...")
-        try:
-            from carconnectivity.carconnectivity import CarConnectivity
-            
-            # Luodaan CarConnectivity-konfiguraatio tokenille
-            config = {
-                "carConnectivity": {
-                    "connectors": [
-                        {
-                            "type": "volkswagen",
-                            "config": {
-                                "username": VW_USERNAME,
-                                "password": VW_PASSWORD,
-                                "token": VW_TOKEN
-                            }
+    if not VW_TOKEN:
+        logger.info("ℹ️ [VW CONNECT] VW_TOKEN ei asetettu. Odotetaan tokenia...")
+        return
+
+    logger.info("🔑 [VW CONNECT] Käytetään tallennettua VW_TOKEN-istuntoa...")
+    try:
+        from carconnectivity.carconnectivity import CarConnectivity
+        
+        config = {
+            "carConnectivity": {
+                "connectors": [
+                    {
+                        "type": "volkswagen",
+                        "config": {
+                            "username": VW_USERNAME,
+                            "password": VW_PASSWORD,
+                            "token": VW_TOKEN
                         }
-                    ]
-                }
+                    }
+                ]
             }
+        }
+        
+        cc = CarConnectivity(config=config)
+        cc.startup()
+        
+        # Odotetaan sekunti, että yhteys kättelee
+        time.sleep(2)
+        
+        if hasattr(cc, 'garage') and cc.garage and len(cc.garage.drives) > 0:
+            drive = list(cc.garage.drives.values())[0]
             
-            cc = CarConnectivity(config=config)
-            cc.startup()
+            # Luetaan akkutiedot
+            if hasattr(drive, 'battery') and drive.battery:
+                if hasattr(drive.battery, 'soc') and drive.battery.soc.value is not None:
+                    car_state["currentSoc"] = int(drive.battery.soc.value)
+                if hasattr(drive.battery, 'range') and drive.battery.range.value is not None:
+                    car_state["rangeKm"] = int(drive.battery.range.value)
             
-            # Haetaan autot
-            if cc.garage and len(cc.garage.drives) > 0:
-                drive = list(cc.garage.drives.values())[0]
-                
-                # Luetaan akun varaus (SoC) ja toimintasäde
-                if hasattr(drive, 'battery') and drive.battery is not None:
-                    if hasattr(drive.battery, 'soc') and drive.battery.soc.value is not None:
-                        car_state["currentSoc"] = int(drive.battery.soc.value)
-                    if hasattr(drive.battery, 'range') and drive.battery.range.value is not None:
-                        car_state["rangeKm"] = int(drive.battery.range.value)
-                
-                # Luetaan GPS-sijainti
-                if hasattr(drive, 'position') and drive.position is not None:
-                    if hasattr(drive.position, 'latitude') and drive.position.latitude.value is not None:
-                        car_state["latitude"] = float(drive.position.latitude.value)
-                    if hasattr(drive.position, 'longitude') and drive.position.longitude.value is not None:
-                        car_state["longitude"] = float(drive.position.longitude.value)
-                        car_state["locationName"] = "ID.4 Sijainti (Autolta)"
+            # Luetaan GPS-sijainti
+            if hasattr(drive, 'position') and drive.position:
+                if hasattr(drive.position, 'latitude') and drive.position.latitude.value is not None:
+                    car_state["latitude"] = float(drive.position.latitude.value)
+                if hasattr(drive.position, 'longitude') and drive.position.longitude.value is not None:
+                    car_state["longitude"] = float(drive.position.longitude.value)
+                    car_state["locationName"] = f"VW ID.4 ({car_state['latitude']:.4f}, {car_state['longitude']:.4f})"
 
-                car_state["standby"] = False
-                logger.info(f"✅ [VW CONNECT] Auton tiedot haettu! Akku: {car_state['currentSoc']}% | Lat: {car_state['latitude']}")
-                return True
-
-        except Exception as e:
-            logger.warning(f"⚠️ [VW CONNECT] Virhe rajapintahaussa: {e}")
-
-    # Fallback / Varatila jos yhteys ei muodostu
-    logger.info("ℹ️ [VW CONNECT] Odotetaan rajapintadataa...")
-    car_state["standby"] = False
-    return False
+            car_state["standby"] = False
+            logger.info(f"✅ [VW CONNECT] Tiedot haettu! Akku: {car_state['currentSoc']}% | Lat: {car_state['latitude']}")
+            
+            cc.shutdown()
+    except Exception as e:
+        logger.warning(f"⚠️ [VW CONNECT] Virhe haussa: {e}")
 
 def fetch_spot_prices():
     global spot_data
@@ -99,20 +93,18 @@ def fetch_spot_prices():
         if res.status_code == 200:
             data = res.json()
             prices = [round(item["PriceWithTax"] * 100, 2) for item in data[:24]]
-            
-            # Etsitään 2 halvinta tuntia
             sorted_hours = sorted(range(len(prices)), key=lambda k: prices[k])[:2]
             
             spot_data["hours"] = prices
             spot_data["cheapHours"] = sorted_hours
-            logger.info(f"📈 [SPOT] Tunnit haettu onnistuneesti. Halvimmat tunnit: {sorted_hours}")
+            logger.info(f"📈 [SPOT] Tunnit haettu. Halvimmat tunnit: {sorted_hours}")
     except Exception as e:
         logger.error(f"❌ [SPOT ERROR] Virhe pörssisähköhaussa: {e}")
 
 def daemon_loop():
     while True:
         logger.info("[DAEMON] Päivitetään ajoneuvon ja pörssisähkön tiedot...")
-        connect_and_update_vw()
+        update_vw_data()
         fetch_spot_prices()
         car_state["lastUpdated"] = time.strftime("%H:%M:%S")
         time.sleep(120)

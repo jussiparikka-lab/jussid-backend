@@ -15,10 +15,9 @@ CORS(app)
 VW_USERNAME = os.environ.get("VW_USERNAME", "jussi.parikka@gmail.com")
 VW_PASSWORD = os.environ.get("VW_PASSWORD", "R0manialainen2025")
 
-# Järjestelmän tila
 auth_state = {
-    "status": "IDLE",  # IDLE, WAITING_2FA, CONNECTED, ERROR
-    "message": "Odotetaan käynnistystä...",
+    "status": "WAITING_2FA",
+    "message": "Anna sähköpostiisi tullut 6-numeroinen VW-koodi sovellukseen.",
     "code_submitted": None
 }
 
@@ -35,37 +34,63 @@ car_state = {
 }
 
 spot_data = {"hours": [], "cheapHours": [], "chargeNow": False}
+weconnect_instance = None
 
-def connect_vw_with_2fa():
-    global car_state, auth_state
-    
-    logger.info("🚀 [VW CONNECT] Aloitetaan kirjautuminen WeConnectiin...")
-    auth_state["status"] = "WAITING_2FA"
-    auth_state["message"] = "Kirjautumiskoodi lähetetty sähköpostiin! Syötä koodi sovellukseen."
-
+def init_weconnect():
+    global car_state, auth_state, weconnect_instance
     try:
-        from weconnect import weconnect
+        from weconnect import weconnect as wc
         
-        # Odotetaan max 3 minuuttia käyttäjän koodia
-        timeout = 180
-        start_time = time.time()
+        logger.info("🚀 [VW CONNECT] Käynnistetään WeConnect-autentikointi...")
         
-        while auth_state["code_submitted"] is None:
-            if time.time() - start_time > timeout:
-                auth_state["status"] = "ERROR"
-                auth_state["message"] = "2FA-koodin syöttö aikakatkaistiin."
-                logger.warning("⚠️ [VW CONNECT] 2FA-koodin syöttö aikakatkaistiin.")
-                return False
-            time.sleep(2)
+        # Luodaan WeConnect-sessio
+        weconnect_instance = wc.WeConnect(
+            username=VW_USERNAME,
+            password=VW_PASSWORD,
+            tokenfile=".vw_tokens.json"
+        )
+
+        # Odotetaan käyttäjän syöttämää 2FA-koodia jos sessio sitää vaatii
+        if not os.path.exists(".vw_tokens.json"):
+            auth_state["status"] = "WAITING_2FA"
+            logger.info("🔑 [VW CONNECT] Odotetaan 2FA-koodia käyttöliittymästä...")
             
-        submitted_code = auth_state["code_submitted"]
-        logger.info(f"🔑 [VW CONNECT] Vastaanotettu koodi: {submitted_code}. Vahvistetaan...")
-        
-        # Tässä syötetään koodi kirjastolle
+            timeout = 300  # 5 minuutin odotusaika koodille
+            start = time.time()
+            while auth_state["code_submitted"] is None:
+                if time.time() - start > timeout:
+                    auth_state["status"] = "ERROR"
+                    auth_state["message"] = "2FA-koodin syöttö aikakatkaistiin."
+                    return False
+                time.sleep(2)
+
+            code = auth_state["code_submitted"]
+            logger.info(f"📩 [VW CONNECT] Vahvistetaan koodilla: {code}")
+            
+        weconnect_instance.login()
+        weconnect_instance.update()
+
+        # Haetaan auton tiedot
+        for vin, vehicle in weconnect_instance.vehicles.items():
+            if hasattr(vehicle, 'domains') and 'charging' in vehicle.domains:
+                charging = vehicle.domains['charging']
+                if 'batteryStatus' in charging:
+                    car_state["currentSoc"] = vehicle.domains['charging']['batteryStatus'].currentSOC_pct.value
+                if 'chargingStatus' in charging:
+                    car_state["rangeKm"] = vehicle.domains['charging']['batteryStatus'].cruisingRangeElectric_km.value
+
+            if hasattr(vehicle, 'domains') and 'parking' in vehicle.domains:
+                parking = vehicle.domains['parking']
+                if 'parkingPosition' in parking:
+                    pos = parking['parkingPosition']
+                    car_state["latitude"] = pos.latitude.value
+                    car_state["longitude"] = pos.longitude.value
+                    car_state["locationName"] = "ID.4 Pysäköity"
+
         auth_state["status"] = "CONNECTED"
-        auth_state["message"] = "Yhdistetty VW Connectiin!"
+        auth_state["message"] = "VW Connect Yhdistetty!"
         car_state["standby"] = False
-        auth_state["code_submitted"] = None
+        logger.info(f"✅ [VW CONNECT] Tiedot haettu! Akku: {car_state['currentSoc']}%")
         return True
 
     except Exception as e:
@@ -90,8 +115,8 @@ def fetch_spot_prices():
 
 def daemon_loop():
     while True:
-        if auth_state["status"] not in ["CONNECTED", "WAITING_2FA"]:
-            connect_vw_with_2fa()
+        if auth_state["status"] != "CONNECTED":
+            init_weconnect()
         fetch_spot_prices()
         car_state["lastUpdated"] = time.strftime("%H:%M:%S")
         time.sleep(120)
@@ -105,14 +130,12 @@ def index():
         "spot": spot_data
     })
 
-# Reitti koodin vastaanottamiselle
 @app.route('/submit-2fa', methods=['POST'])
 def submit_2fa():
     data = request.get_json()
     code = data.get("code") if data else None
     if code:
         auth_state["code_submitted"] = str(code).strip()
-        logger.info(f"📩 [2FA REITI] Vastaanotettu 2FA-koodi käyttöliittymästä: {code}")
         return jsonify({"status": "ok", "message": "Koodi vastaanotettu, käsitellään..."})
     return jsonify({"status": "error", "message": "Virheellinen koodi"}), 400
 

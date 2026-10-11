@@ -13,7 +13,7 @@ app = Flask(__name__)
 CORS(app)
 
 VW_USERNAME = os.environ.get("VW_USERNAME", "jussi.parikka@gmail.com")
-VW_PASSWORD = os.environ.get("VW_PASSWORD", "")
+VW_PASSWORD = os.environ.get("VW_PASSWORD", "R0manialainen2025")
 
 auth_state = {
     "status": "WAITING_2FA",

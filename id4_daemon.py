@@ -139,6 +139,17 @@ class VWCarManager:
         if not self.client:
             self.connect()
 
+        # Luetaan ensin nykyinen tila Firebasesta (estetään manuaalisen varauksen ylikirjoitus 64%:lla)
+        try:
+            fb_res = requests.get(f"{FIREBASE_URL}/carStatus.json", timeout=5)
+            if fb_res.status_code == 200 and fb_res.json():
+                fb_data = fb_res.json()
+                if "currentSoc" in fb_data and car_state["connectionStatus"] != "Connected":
+                    car_state["currentSoc"] = int(fb_data["currentSoc"])
+                    car_state["rangeKm"] = int(fb_data.get("rangeKm", car_state["currentSoc"] * 4.6))
+        except Exception as e:
+            print(f"ℹ️ [FIREBASE SYNC CHECK] {e}")
+
         # Yritetään lukea tuorein telemetria ajoneuvolta
         if self.client:
             try:
@@ -150,6 +161,10 @@ class VWCarManager:
                             if hasattr(drive, 'battery') and drive.battery.level.value is not None:
                                 car_state["currentSoc"] = int(drive.battery.level.value)
                                 car_state["rangeKm"] = int(getattr(drive.battery, 'range', {}).get('value', car_state["currentSoc"] * 4.6))
+                        # Luetaan sijainti jos saatavilla
+                        if hasattr(vehicle, 'position') and vehicle.position.latitude.value is not None:
+                            car_state["latitude"] = vehicle.position.latitude.value
+                            car_state["longitude"] = vehicle.position.longitude.value
                         car_state["connectionStatus"] = "Connected"
                 elif hasattr(self.client, 'vehicles'):
                     self.client.update()

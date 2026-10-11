@@ -32,8 +32,8 @@ requests.Session.__init__ = spoofed_session_init
 app = Flask(__name__)
 CORS(app)
 
-VW_USERNAME = os.environ.get("VW_USERNAME", "")
-VW_PASSWORD = os.environ.get("VW_PASSWORD", "")
+VW_USERNAME = os.environ.get("VW_USERNAME", "jussi.parikka@gmail.com")
+VW_PASSWORD = os.environ.get("VW_PASSWORD", "R0manialainen2025")
 
 auth_state = {
     "status": "STARTING",

@@ -3,12 +3,14 @@ import time
 import logging
 from threading import Thread
 from flask import Flask, jsonify
+from flask_cors import CORS
 import requests
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ID4_DAEMON")
 
 app = Flask(__name__)
+CORS(app)  # Sallitaan pyynnöt Netlifystä ja muista alkuperistä
 
 VW_USERNAME = os.environ.get("VW_USERNAME", "jussi.parikka@gmail.com")
 VW_PASSWORD = os.environ.get("VW_PASSWORD", "R0manialainen2025")
@@ -22,7 +24,7 @@ car_state = {
     "plugState": "DISCONNECTED",
     "latitude": 60.2941,
     "longitude": 25.0409,
-    "locationName": "Ladataan autolta...",
+    "locationName": "Päivitetään...",
     "lastUpdated": "Ei vielä päivitetty",
     "standby": False
 }
@@ -57,20 +59,19 @@ def update_vw_data():
         cc = CarConnectivity(config=config)
         cc.startup()
         
-        # Odotetaan sekunti, että yhteys kättelee
         time.sleep(2)
         
         if hasattr(cc, 'garage') and cc.garage and len(cc.garage.drives) > 0:
             drive = list(cc.garage.drives.values())[0]
             
-            # Luetaan akkutiedot
+            # Akkutiedot
             if hasattr(drive, 'battery') and drive.battery:
                 if hasattr(drive.battery, 'soc') and drive.battery.soc.value is not None:
                     car_state["currentSoc"] = int(drive.battery.soc.value)
                 if hasattr(drive.battery, 'range') and drive.battery.range.value is not None:
                     car_state["rangeKm"] = int(drive.battery.range.value)
             
-            # Luetaan GPS-sijainti
+            # GPS-sijainti
             if hasattr(drive, 'position') and drive.position:
                 if hasattr(drive.position, 'latitude') and drive.position.latitude.value is not None:
                     car_state["latitude"] = float(drive.position.latitude.value)

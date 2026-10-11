@@ -1,0 +1,38 @@
+name: Update Data
+
+on:
+  schedule:
+    - cron: '*/15 * * * *' # Ajetaan 15 minuutin välein
+  workflow_dispatch: # Mahdollistaa manuaalisen käynnistyksen
+
+permissions:
+  contents: write
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run update script
+        env:
+          VW_USERNAME: ${{ secrets.VW_USERNAME }}
+          VW_PASSWORD: ${{ secrets.VW_PASSWORD }}
+        run: python update_data.py
+
+      - name: Commit data.json
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data.json
+          git commit -m "Automaattinen datan päivitys" || echo "Ei muutoksia"
+          git push

@@ -43,18 +43,15 @@ def init_weconnect():
         
         logger.info("🚀 [VW CONNECT] Aloitetaan WeConnect-autentikointi...")
         
-        # Estetään automaattinen päivitys alustuksessa (updateAfterLogin=False)
-        try:
-            weconnect_instance = wc.WeConnect(
-                username=VW_USERNAME,
-                password=VW_PASSWORD,
-                tokenfile=".vw_tokens.json",
-                updateAfterLogin=False,
-                disabledDomains=[Domain.PARKING, Domain.READINESS]
-            )
-        except KeyError as ke:
-            logger.warning(f"⚠️ Ohitetaan alustuksen KeyError: {ke}")
-            return False
+        # Alustetaan ilman virheellisiä argumentteja
+        weconnect_instance = wc.WeConnect(
+            username=VW_USERNAME,
+            password=VW_PASSWORD,
+            tokenfile=".vw_tokens.json"
+        )
+
+        # Rajataan päivitykset vain akku/lataustietoihin
+        weconnect_instance.selective = [Domain.CHARGING]
 
         if not os.path.exists(".vw_tokens.json"):
             auth_state["status"] = "WAITING_2FA"
@@ -72,21 +69,15 @@ def init_weconnect():
             code = auth_state["code_submitted"]
             logger.info(f"📩 [VW CONNECT] Vahvistetaan koodi: {code}")
 
-        # Kirjaudutaan turvallisesti
+        # Kirjaudutaan sisään
         try:
             weconnect_instance.login()
         except KeyError as ke:
-            logger.warning(f"⚠️ Ohitetaan kirjautumisen KeyError: {ke}")
+            logger.warning(f"⚠️ Ohitetaan KeyError kirjautumisessa: {ke}")
         except Exception as login_err:
             logger.warning(f"⚠️ Kirjautumisvaroitus: {login_err}")
 
-        # Päivitetään VAIN akku- ja lataustiedot
-        try:
-            weconnect_instance.update(selective=[Domain.CHARGING])
-        except Exception as update_err:
-            logger.warning(f"⚠️ Ohitetaan päivitysvirhe: {update_err}")
-
-        # Luetaan akkutiedot suojatusti
+        # Luetaan akkutiedot
         try:
             if hasattr(weconnect_instance, 'vehicles') and weconnect_instance.vehicles:
                 for vin, vehicle in weconnect_instance.vehicles.items():

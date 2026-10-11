@@ -43,19 +43,21 @@ def init_weconnect():
         
         logger.info("🚀 [VW CONNECT] Aloitetaan WeConnect-kirjautuminen...")
         
-        # Alustetaan WeConnect ilman pakollista location-domainia
         weconnect_instance = wc.WeConnect(
             username=VW_USERNAME,
             password=VW_PASSWORD,
             tokenfile=".vw_tokens.json"
         )
 
-        # Pyydetään vain latausdomain, jottei location-virhe kaada prosessia
-        weconnect_instance.selective = [Domain.CHARGING, Domain.PARKING]
+        # Pyydetään vain lataustiedot virheiden välttämiseksi
+        try:
+            weconnect_instance.selective = [Domain.CHARGING]
+        except Exception:
+            pass
 
         if not os.path.exists(".vw_tokens.json"):
             auth_state["status"] = "WAITING_2FA"
-            logger.info("🔑 [VW CONNECT] Odotetaan koodia käyttöliittymästä...")
+            logger.info("🔑 [VW CONNECT] Odotetaan 2FA-koodia käyttöliittymästä...")
             
             timeout = 300
             start = time.time()
@@ -67,29 +69,27 @@ def init_weconnect():
                 time.sleep(2)
 
             code = auth_state["code_submitted"]
-            logger.info(f"📩 [VW CONNECT] Lähetetään 2FA: {code}")
+            logger.info(f"📩 [VW CONNECT] Lähetetään koodi: {code}")
 
         # Kirjaudutaan sisään
         weconnect_instance.login()
         weconnect_instance.update()
 
-        # Haetaan lataustiedot turvallisesti
-        if hasattr(weconnect_instance, 'vehicles'):
-            for vin, vehicle in weconnect_instance.vehicles.items():
-                if hasattr(vehicle, 'domains'):
-                    # Akku
-                    if 'charging' in vehicle.domains:
-                        charging = vehicle.domains['charging']
-                        if 'batteryStatus' in charging:
-                            car_state["currentSoc"] = int(charging['batteryStatus'].currentSOC_pct.value)
-                            car_state["rangeKm"] = int(charging['batteryStatus'].cruisingRangeElectric_km.value)
-                    
-                    # Sijainti jos saatavilla
-                    if 'parking' in vehicle.domains:
-                        parking = vehicle.domains['parking']
-                        if 'parkingPosition' in parking and parking['parkingPosition'].latitude.value:
-                            car_state["latitude"] = float(parking['parkingPosition'].latitude.value)
-                            car_state["longitude"] = float(parking['parkingPosition'].longitude.value)
+        # Haetaan lataustiedot täysin suojatusti
+        try:
+            if hasattr(weconnect_instance, 'vehicles') and weconnect_instance.vehicles:
+                for vin, vehicle in weconnect_instance.vehicles.items():
+                    if hasattr(vehicle, 'domains') and vehicle.domains:
+                        if 'charging' in vehicle.domains:
+                            charging = vehicle.domains['charging']
+                            if 'batteryStatus' in charging:
+                                bat = charging['batteryStatus']
+                                if hasattr(bat, 'currentSOC_pct') and bat.currentSOC_pct.value is not None:
+                                    car_state["currentSoc"] = int(bat.currentSOC_pct.value)
+                                if hasattr(bat, 'cruisingRangeElectric_km') and bat.cruisingRangeElectric_km.value is not None:
+                                    car_state["rangeKm"] = int(bat.cruisingRangeElectric_km.value)
+        except Exception as data_err:
+            logger.warning(f"⚠️ Datamapping varoitus: {data_err}")
 
         auth_state["status"] = "CONNECTED"
         auth_state["message"] = "VW Connect Yhdistetty!"

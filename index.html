@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JussID — VW ID.4 Älylataus</title>
+  <style>
+    :root {
+      --bg-color: #0f172a;
+      --card-bg: #1e293b;
+      --accent: #38bdf8;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --border: #334155;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text);
+      padding: 1rem;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      color: var(--accent);
+    }
+
+    .status-badge {
+      font-size: 0.8rem;
+      padding: 0.25rem 0.6rem;
+      border-radius: 12px;
+      background-color: var(--border);
+      color: var(--text-muted);
+    }
+
+    .card {
+      background-color: var(--card-bg);
+      border-radius: 1rem;
+      padding: 1.25rem;
+      margin-bottom: 1.25rem;
+      border: 1px solid var(--border);
+    }
+
+    .card-title {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.75rem;
+    }
+
+    .car-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .metric {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .metric-value {
+      font-size: 1.8rem;
+      font-weight: bold;
+      color: var(--text);
+    }
+
+    .metric-label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .price-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .price-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.5rem;
+      background-color: rgba(255, 255, 255, 0.03);
+      border-radius: 0.5rem;
+      font-size: 0.9rem;
+    }
+
+    .price-row.cheap {
+      border-left: 4px solid var(--success);
+    }
+
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .history-item {
+      padding: 0.75rem;
+      background-color: rgba(255, 255, 255, 0.02);
+      border-radius: 0.5rem;
+      border: 1px solid var(--border);
+      font-size: 0.85rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .timestamp {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      text-align: right;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>JussID Dashboard</h1>
+    <div id="connection-status" class="status-badge">Päivitetään...</div>
+  </header>
+
+  <!-- Auton tila -->
+  <div class="card">
+    <div class="card-title">Volkswagen ID.4 Tila</div>
+    <div class="car-metrics">
+      <div class="metric">
+        <span id="car-soc" class="metric-value">-- %</span>
+        <span class="metric-label">Akun varaus</span>
+      </div>
+      <div class="metric">
+        <span id="car-range" class="metric-value">-- km</span>
+        <span class="metric-label">Toimintasäde</span>
+      </div>
+    </div>
+    <div style="margin-top: 1rem; font-size: 0.9rem;">
+      Lataustila: <strong id="car-charging-state" style="color: var(--accent);">Tarkistetaan...</strong>
+    </div>
+  </div>
+
+  <!-- Pörssisähkön hinnat -->
+  <div class="card">
+    <div class="card-title">Pörssisähkö (Nord Pool FI)</div>
+    <div class="price-list" id="price-container">
+      <div class="price-row">Ladataan hintoja...</div>
+    </div>
+  </div>
+
+  <!-- Historiatiedot -->
+  <div class="card">
+    <div class="card-title">Lataushistoria & Logit</div>
+    <div class="history-list" id="history-container">
+      <div class="history-item">Ei vielä historiaa tallennettuna.</div>
+    </div>
+  </div>
+
+  <div id="last-updated" class="timestamp">Viimeisin päivitys: --</div>
+
+  <script>
+    async function loadDashboardData() {
+      try {
+        // Hakee data.json-tiedoston samasta hakemistosta ilman välimuistia
+        const response = await fetch('data.json?t=' + new Date().getTime());
+        if (!response.ok) throw new Error("Dataa ei saatu haettua");
+
+        const data = await response.json();
+
+        // 1. Päivitä auton tiedot
+        if (data.car) {
+          document.getElementById('car-soc').innerText = (data.car.soc !== null ? data.car.soc : '--') + ' %';
+          document.getElementById('car-range').innerText = (data.car.range_km !== null ? data.car.range_km : '--') + ' km';
+          document.getElementById('car-charging-state').innerText = translateChargingState(data.car.charging_state);
+        }
+
+        // 2. Päivitä pörssisähkön hinnat
+        if (data.prices && data.prices.length > 0) {
+          const priceContainer = document.getElementById('price-container');
+          priceContainer.innerHTML = '';
+
+          data.prices.slice(0, 12).forEach(item => {
+            const date = new Date(item.dateTime);
+            const timeStr = date.getHours().toString().padStart(2, '0') + ':00';
+            const price = item.priceWithTax;
+
+            const row = document.createElement('div');
+            row.className = `price-row ${price < 5 ? 'cheap' : ''}`;
+            row.innerHTML = `<span>klo ${timeStr}</span><strong>${price.toFixed(2)} snt/kWh</strong>`;
+            priceContainer.appendChild(row);
+          });
+        }
+
+        // 3. Päivitä historia
+        updateHistoryLog(data);
+
+        // Status-merkinnät
+        document.getElementById('connection-status').innerText = 'Yhdistetty';
+        document.getElementById('connection-status').style.backgroundColor = 'rgba(34, 197, 94, 0.2)';
+        document.getElementById('connection-status').style.color = '#22c55e';
+        document.getElementById('last-updated').innerText = 'Viimeisin päivitys: ' + (data.updated_at || '--');
+
+      } catch (error) {
+        console.error("Virhe ladattaessa dataa:", error);
+        document.getElementById('connection-status').innerText = 'Virhe yhteydessä';
+        document.getElementById('connection-status').style.backgroundColor = 'rgba(239, 68, 68, 0.2)';
+        document.getElementById('connection-status').style.color = '#ef4444';
+      }
+    }
+
+    function translateChargingState(state) {
+      switch(state) {
+        case 'charging': return 'Ladataan';
+        case 'readyForCharging': return 'Valmis lataamaan';
+        case 'off': return 'Ei lataa';
+        case 'error': return 'Virhe yhteydessä';
+        default: return state || 'Tuntematon';
+      }
+    }
+
+    function updateHistoryLog(data) {
+      const historyContainer = document.getElementById('history-container');
+      
+      // Lue aiemmat historiamerkinnät selaimen muistista (localStorage)
+      let history = JSON.parse(localStorage.getItem('jussid_history') || '[]');
+
+      if (data.car && data.car.soc !== null) {
+        const newEntry = {
+          time: data.updated_at || new Date().toLocaleString('fi-FI'),
+          soc: data.car.soc,
+          range: data.car.range_km,
+          state: translateChargingState(data.car.charging_state)
+        };
+
+        // Lisää vain jos tila tai aika on muuttunut
+        if (history.length === 0 || history[0].time !== newEntry.time) {
+          history.unshift(newEntry);
+          if (history.length > 10) history.pop(); // Säilytä viimeiset 10 merkintää
+          localStorage.setItem('jussid_history', JSON.stringify(history));
+        }
+      }
+
+      if (history.length > 0) {
+        historyContainer.innerHTML = history.map(item => `
+          <div class="history-item">
+            <div>
+              <strong>Akku: ${item.soc}%</strong> (${item.range} km)<br>
+              <small style="color: var(--text-muted);">${item.state}</small>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);">${item.time}</div>
+          </div>
+        `).join('');
+      }
+    }
+
+    // Lataa data heti ja päivitä automaattisesti 60s välein
+    loadDashboardData();
+    setInterval(loadDashboardData, 60000);
+  </script>
+</body>
+</html>

@@ -1,396 +1,47 @@
 {
-  "car": {
-    "soc": null,
-    "range_km": null,
-    "charging_state": "error",
-    "error_details": "'location'",
-    "last_updated": "2026-10-16 18:07:31"
+  "status": "online",
+  "auth": {
+    "status": "ERROR",
+    "message": "'location'"
   },
-  "prices": [
-    {
-      "dateTime": "2026-10-16T00:00:00+03:00",
-      "priceWithTax": 0.13
-    },
-    {
-      "dateTime": "2026-10-16T00:15:00+03:00",
-      "priceWithTax": 0.13
-    },
-    {
-      "dateTime": "2026-10-16T00:30:00+03:00",
-      "priceWithTax": 0.13
-    },
-    {
-      "dateTime": "2026-10-16T00:45:00+03:00",
-      "priceWithTax": 0.13
-    },
-    {
-      "dateTime": "2026-10-16T01:00:00+03:00",
-      "priceWithTax": 0.12
-    },
-    {
-      "dateTime": "2026-10-16T01:15:00+03:00",
-      "priceWithTax": 0.12
-    },
-    {
-      "dateTime": "2026-10-16T01:30:00+03:00",
-      "priceWithTax": 0.12
-    },
-    {
-      "dateTime": "2026-10-16T01:45:00+03:00",
-      "priceWithTax": 0.12
-    },
-    {
-      "dateTime": "2026-10-16T02:00:00+03:00",
-      "priceWithTax": 0.07
-    },
-    {
-      "dateTime": "2026-10-16T02:15:00+03:00",
-      "priceWithTax": 0.0
-    },
-    {
-      "dateTime": "2026-10-16T02:30:00+03:00",
-      "priceWithTax": 0.12
-    },
-    {
-      "dateTime": "2026-10-16T02:45:00+03:00",
-      "priceWithTax": 0.08
-    },
-    {
-      "dateTime": "2026-10-16T03:00:00+03:00",
-      "priceWithTax": 0.12
-    },
-    {
-      "dateTime": "2026-10-16T03:15:00+03:00",
-      "priceWithTax": 0.12
-    },
-    {
-      "dateTime": "2026-10-16T03:30:00+03:00",
-      "priceWithTax": 0.12
-    },
-    {
-      "dateTime": "2026-10-16T03:45:00+03:00",
-      "priceWithTax": 0.12
-    },
-    {
-      "dateTime": "2026-10-16T04:00:00+03:00",
-      "priceWithTax": 0.12
-    },
-    {
-      "dateTime": "2026-10-16T04:15:00+03:00",
-      "priceWithTax": 0.12
-    },
-    {
-      "dateTime": "2026-10-16T04:30:00+03:00",
-      "priceWithTax": 0.12
-    },
-    {
-      "dateTime": "2026-10-16T04:45:00+03:00",
-      "priceWithTax": 0.12
-    },
-    {
-      "dateTime": "2026-10-16T05:00:00+03:00",
-      "priceWithTax": 0.08
-    },
-    {
-      "dateTime": "2026-10-16T05:15:00+03:00",
-      "priceWithTax": 0.1
-    },
-    {
-      "dateTime": "2026-10-16T05:30:00+03:00",
-      "priceWithTax": 0.0
-    },
-    {
-      "dateTime": "2026-10-16T05:45:00+03:00",
-      "priceWithTax": 0.0
-    },
-    {
-      "dateTime": "2026-10-16T06:00:00+03:00",
-      "priceWithTax": 0.13
-    },
-    {
-      "dateTime": "2026-10-16T06:15:00+03:00",
-      "priceWithTax": 0.13
-    },
-    {
-      "dateTime": "2026-10-16T06:30:00+03:00",
-      "priceWithTax": 0.19
-    },
-    {
-      "dateTime": "2026-10-16T06:45:00+03:00",
-      "priceWithTax": 0.25
-    },
-    {
-      "dateTime": "2026-10-16T07:00:00+03:00",
-      "priceWithTax": 0.25
-    },
-    {
-      "dateTime": "2026-10-16T07:15:00+03:00",
-      "priceWithTax": 0.25
-    },
-    {
-      "dateTime": "2026-10-16T07:30:00+03:00",
-      "priceWithTax": 0.32
-    },
-    {
-      "dateTime": "2026-10-16T07:45:00+03:00",
-      "priceWithTax": 0.32
-    },
-    {
-      "dateTime": "2026-10-16T08:00:00+03:00",
-      "priceWithTax": 0.5
-    },
-    {
-      "dateTime": "2026-10-16T08:15:00+03:00",
-      "priceWithTax": 0.51
-    },
-    {
-      "dateTime": "2026-10-16T08:30:00+03:00",
-      "priceWithTax": 0.51
-    },
-    {
-      "dateTime": "2026-10-16T08:45:00+03:00",
-      "priceWithTax": 0.51
-    },
-    {
-      "dateTime": "2026-10-16T09:00:00+03:00",
-      "priceWithTax": 0.56
-    },
-    {
-      "dateTime": "2026-10-16T09:15:00+03:00",
-      "priceWithTax": 0.55
-    },
-    {
-      "dateTime": "2026-10-16T09:30:00+03:00",
-      "priceWithTax": 0.63
-    },
-    {
-      "dateTime": "2026-10-16T09:45:00+03:00",
-      "priceWithTax": 0.85
-    },
-    {
-      "dateTime": "2026-10-16T10:00:00+03:00",
-      "priceWithTax": 0.98
-    },
-    {
-      "dateTime": "2026-10-16T10:15:00+03:00",
-      "priceWithTax": 1.31
-    },
-    {
-      "dateTime": "2026-10-16T10:30:00+03:00",
-      "priceWithTax": 2.25
-    },
-    {
-      "dateTime": "2026-10-16T10:45:00+03:00",
-      "priceWithTax": 3.9
-    },
-    {
-      "dateTime": "2026-10-16T11:00:00+03:00",
-      "priceWithTax": 1.44
-    },
-    {
-      "dateTime": "2026-10-16T11:15:00+03:00",
-      "priceWithTax": 2.18
-    },
-    {
-      "dateTime": "2026-10-16T11:30:00+03:00",
-      "priceWithTax": 3.12
-    },
-    {
-      "dateTime": "2026-10-16T11:45:00+03:00",
-      "priceWithTax": 3.51
-    },
-    {
-      "dateTime": "2026-10-16T12:00:00+03:00",
-      "priceWithTax": 2.39
-    },
-    {
-      "dateTime": "2026-10-16T12:15:00+03:00",
-      "priceWithTax": 2.86
-    },
-    {
-      "dateTime": "2026-10-16T12:30:00+03:00",
-      "priceWithTax": 3.51
-    },
-    {
-      "dateTime": "2026-10-16T12:45:00+03:00",
-      "priceWithTax": 4.99
-    },
-    {
-      "dateTime": "2026-10-16T13:00:00+03:00",
-      "priceWithTax": 2.99
-    },
-    {
-      "dateTime": "2026-10-16T13:15:00+03:00",
-      "priceWithTax": 3.51
-    },
-    {
-      "dateTime": "2026-10-16T13:30:00+03:00",
-      "priceWithTax": 3.51
-    },
-    {
-      "dateTime": "2026-10-16T13:45:00+03:00",
-      "priceWithTax": 5.55
-    },
-    {
-      "dateTime": "2026-10-16T14:00:00+03:00",
-      "priceWithTax": 3.51
-    },
-    {
-      "dateTime": "2026-10-16T14:15:00+03:00",
-      "priceWithTax": 3.77
-    },
-    {
-      "dateTime": "2026-10-16T14:30:00+03:00",
-      "priceWithTax": 3.56
-    },
-    {
-      "dateTime": "2026-10-16T14:45:00+03:00",
-      "priceWithTax": 5.79
-    },
-    {
-      "dateTime": "2026-10-16T15:00:00+03:00",
-      "priceWithTax": 3.51
-    },
-    {
-      "dateTime": "2026-10-16T15:15:00+03:00",
-      "priceWithTax": 4.02
-    },
-    {
-      "dateTime": "2026-10-16T15:30:00+03:00",
-      "priceWithTax": 4.98
-    },
-    {
-      "dateTime": "2026-10-16T15:45:00+03:00",
-      "priceWithTax": 4.32
-    },
-    {
-      "dateTime": "2026-10-16T16:00:00+03:00",
-      "priceWithTax": 5.01
-    },
-    {
-      "dateTime": "2026-10-16T16:15:00+03:00",
-      "priceWithTax": 4.1
-    },
-    {
-      "dateTime": "2026-10-16T16:30:00+03:00",
-      "priceWithTax": 4.03
-    },
-    {
-      "dateTime": "2026-10-16T16:45:00+03:00",
-      "priceWithTax": 3.84
-    },
-    {
-      "dateTime": "2026-10-16T17:00:00+03:00",
-      "priceWithTax": 4.61
-    },
-    {
-      "dateTime": "2026-10-16T17:15:00+03:00",
-      "priceWithTax": 4.14
-    },
-    {
-      "dateTime": "2026-10-16T17:30:00+03:00",
-      "priceWithTax": 4.36
-    },
-    {
-      "dateTime": "2026-10-16T17:45:00+03:00",
-      "priceWithTax": 3.51
-    },
-    {
-      "dateTime": "2026-10-16T18:00:00+03:00",
-      "priceWithTax": 4.8
-    },
-    {
-      "dateTime": "2026-10-16T18:15:00+03:00",
-      "priceWithTax": 3.74
-    },
-    {
-      "dateTime": "2026-10-16T18:30:00+03:00",
-      "priceWithTax": 3.51
-    },
-    {
-      "dateTime": "2026-10-16T18:45:00+03:00",
-      "priceWithTax": 3.7
-    },
-    {
-      "dateTime": "2026-10-16T19:00:00+03:00",
-      "priceWithTax": 4.99
-    },
-    {
-      "dateTime": "2026-10-16T19:15:00+03:00",
-      "priceWithTax": 4.46
-    },
-    {
-      "dateTime": "2026-10-16T19:30:00+03:00",
-      "priceWithTax": 3.28
-    },
-    {
-      "dateTime": "2026-10-16T19:45:00+03:00",
-      "priceWithTax": 3.23
-    },
-    {
-      "dateTime": "2026-10-16T20:00:00+03:00",
-      "priceWithTax": 3.51
-    },
-    {
-      "dateTime": "2026-10-16T20:15:00+03:00",
-      "priceWithTax": 3.05
-    },
-    {
-      "dateTime": "2026-10-16T20:30:00+03:00",
-      "priceWithTax": 2.75
-    },
-    {
-      "dateTime": "2026-10-16T20:45:00+03:00",
-      "priceWithTax": 2.81
-    },
-    {
-      "dateTime": "2026-10-16T21:00:00+03:00",
-      "priceWithTax": 2.97
-    },
-    {
-      "dateTime": "2026-10-16T21:15:00+03:00",
-      "priceWithTax": 2.6
-    },
-    {
-      "dateTime": "2026-10-16T21:30:00+03:00",
-      "priceWithTax": 2.4
-    },
-    {
-      "dateTime": "2026-10-16T21:45:00+03:00",
-      "priceWithTax": 1.87
-    },
-    {
-      "dateTime": "2026-10-16T22:00:00+03:00",
-      "priceWithTax": 2.98
-    },
-    {
-      "dateTime": "2026-10-16T22:15:00+03:00",
-      "priceWithTax": 2.67
-    },
-    {
-      "dateTime": "2026-10-16T22:30:00+03:00",
-      "priceWithTax": 2.22
-    },
-    {
-      "dateTime": "2026-10-16T22:45:00+03:00",
-      "priceWithTax": 2.07
-    },
-    {
-      "dateTime": "2026-10-16T23:00:00+03:00",
-      "priceWithTax": 2.75
-    },
-    {
-      "dateTime": "2026-10-16T23:15:00+03:00",
-      "priceWithTax": 2.71
-    },
-    {
-      "dateTime": "2026-10-16T23:30:00+03:00",
-      "priceWithTax": 2.42
-    },
-    {
-      "dateTime": "2026-10-16T23:45:00+03:00",
-      "priceWithTax": 2.16
-    }
-  ],
-  "updated_at": "2026-10-16 18:07:31"
+  "car": {
+    "currentSoc": null,
+    "rangeKm": null,
+    "latitude": null,
+    "longitude": null,
+    "locationName": "Ei dataa",
+    "lastUpdated": "15:27:56"
+  },
+  "spot": {
+    "hours": [
+      0.13,
+      0.13,
+      0.13,
+      0.13,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.07,
+      0.0,
+      0.12,
+      0.08,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.08,
+      0.1,
+      0.0,
+      0.0
+    ],
+    "cheapHours": [
+      9,
+      22
+    ]
+  }
 }
